@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "kerberosproject"
+version = "0.1.0"
+description = "Kerberos University Project"
+authors = ["Sagiv Abu <sagivabu101@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pycryptodome = "^3.20.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
