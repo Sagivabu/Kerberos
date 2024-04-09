@@ -1,9 +1,11 @@
 [tool.poetry]
-name = "kerberosproject"
+name = "kerberos"
 version = "0.1.0"
 description = "Kerberos University Project"
 authors = ["Sagiv Abu <sagivabu101@gmail.com>"]
 readme = "README.md"
+packages = [{include = "kerberos"}]
+include = [".env"]
 
 [tool.poetry.dependencies]
 python = "^3.11"

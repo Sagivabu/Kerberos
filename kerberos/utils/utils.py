@@ -1,4 +1,3 @@
-DEFAULT_PORT = 1256
 MIN_PORT_VALUE = 0
 MAX_PORT_VALUE = 65535
 
@@ -10,7 +9,7 @@ def is_valid_port(port) -> bool:
     except ValueError:
         return False
 
-def read_port(file_path: str) -> int:
+def read_port(file_path: str, default_port: int) -> int:
     ''' get port.info file path and return the port in it'''
     try:
         with open(file_path, 'r') as file:
@@ -19,12 +18,12 @@ def read_port(file_path: str) -> int:
             if is_valid_port(content):
                 return int(content)
             else:
-                print(f"Invalid port number in the file, selecting default port: '{DEFAULT_PORT}'.")
-                return DEFAULT_PORT
+                print(f"Invalid port number in the file, selecting default port: '{default_port}'.")
+                return default_port
  
     except FileNotFoundError:
-        print(f"File not found: '{file_path}',selecting default port: '{DEFAULT_PORT}'.")
-        return DEFAULT_PORT
+        print(f"File not found: '{file_path}',selecting default port: '{default_port}'.")
+        return default_port
     except Exception as e:
-        print(f"An error occurred: {e}, \nselecting default port: '{DEFAULT_PORT}'.")
-        return DEFAULT_PORT
+        print(f"An error occurred: {e}, \nselecting default port: '{default_port}'.")
+        return default_port
