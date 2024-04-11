@@ -1,8 +1,8 @@
 from dataclasses import dataclass
-from kerberos.utils.structs import Payload
+from kerberos.utils.structs import Request
 
 @dataclass
-class Test_Payload():
+class Test_Request():
     client_id = '123456789ABCDEFG'
     version = '1'
     code = 'AB'
@@ -10,7 +10,7 @@ class Test_Payload():
 
     #@property
     def test(self):
-        pl = Payload(client_id=self.client_id , version=self.version, code=self.code, payload=self.payload)
+        pl = Request(client_id=self.client_id , version=self.version, code=self.code, payload=self.payload)
         print(f"Encrypting the next payload:\n\tclient_id = ;{self.client_id};\n\tversion = {self.version}\n\tcode = {self.code}\n\tpayload = {self.payload}")
         objectbytes = pl.pack()
         newpl = pl.unpack(objectbytes)
@@ -28,7 +28,7 @@ class Test_Payload():
     
     
 def test():
-    Test_Payload().test()
+    Test_Request().test()
 
 test()
 

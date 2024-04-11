@@ -3,7 +3,7 @@ import datetime
 import hashlib
 from typing import Optional
 
-class Payload:
+class Request:
     def __init__(self, client_id: str, version: str, code: str, payload: Optional[str]):
         self.client_id = client_id[:16]  # Limit to 16 bytes
         self.version = version[:1]  # Limit to 1 byte
@@ -26,7 +26,7 @@ class Payload:
         return struct.pack(format_string, client_id_bytes, version_bytes, code_bytes, self.payload_size, payload_bytes)
     
     @classmethod
-    def unpack(cls, data: bytes) -> 'Payload':
+    def unpack(cls, data: bytes) -> 'Request':
         ''' class method to unpack data and creating new object \n
             'data' - bytes object (=usually Payload object that is after 'pack' method)\n
             return - new Payload object'''
@@ -72,7 +72,13 @@ class Client:
         return cls(id, name, password_hash, datetime_obj)
 
     def print_as_row(self):
-        pass #TODO: STOPPED HERE !
+        """
+        Return string of Client's info to write into a file
+        
+        Returns:
+            string: in the next format -  "ID: Name: PasswordHash: LastSeen"
+        """
+        return f"{self.id}: {self.name}: {self.password_hash}: {self.lastseen.print_datetime()}"
 
 #Client's property
 class Lastseen:
