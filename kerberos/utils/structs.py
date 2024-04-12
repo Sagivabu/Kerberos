@@ -3,7 +3,7 @@ import datetime
 import hashlib
 from typing import Optional
 
-class Request:
+class RequestStructure:
     def __init__(self, client_id: str, version: str, code: str, payload: Optional[str]):
         self.client_id = client_id[:16]  # Limit to 16 bytes
         self.version = version[:1]  # Limit to 1 byte
@@ -26,7 +26,7 @@ class Request:
         return struct.pack(format_string, client_id_bytes, version_bytes, code_bytes, self.payload_size, payload_bytes)
     
     @classmethod
-    def unpack(cls, data: bytes) -> 'Request':
+    def unpack(cls, data: bytes) -> 'RequestStructure':
         ''' class method to unpack data and creating new object \n
             'data' - bytes object (=usually Payload object that is after 'pack' method)\n
             return - new Payload object'''
@@ -36,7 +36,6 @@ class Request:
         payload = data[size_of_header:]
         return cls(header[0].decode('utf-8'), header[1].decode('utf-8'), header[2].decode('utf-8'), payload.decode('utf-8'))
     
-
 class Client:
     def __init__(self, id: str, name: str, password_hash: bytes, datetime_obj: datetime.datetime):
         """

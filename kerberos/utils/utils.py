@@ -27,3 +27,15 @@ def read_port(file_path: str, default_port: int) -> int:
     except Exception as e:
         print(f"An error occurred: {e}, \nselecting default port: '{default_port}'.")
         return default_port
+    
+
+def update_txt_file(file_path: str, string_to_write: str):
+    """
+    Append given string to the end of the text file.
+    """
+    try:
+        with open(file_path, 'a') as file:
+            file.write(string_to_write)
+    except Exception as e:
+        print(f"Failed to update txt file: '{file_path}', with the next string: '{string_to_write}'")
+        raise

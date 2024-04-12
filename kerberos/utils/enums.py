@@ -1,10 +1,10 @@
 from enum import Enum
 
-class Request(Enum): #client -> server
+class RequestEnums(Enum): #client -> server
     #Auth server
     CLIENT_REGISTRATION = 1024 #client registration
-    SERVER_REGISTRATION = 1025 #server registration
-    SERVER_LIST = 1026 #list of all server
+    SERVER_REGISTRATION = 1025 #server registration (NOTE: BONUS)
+    SERVER_LIST = 1026 #list of all server (NOTE: BONUS)
     SYMMETRY_KEY = 1027 #symmetry key
     
     #MSG server

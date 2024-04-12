@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from kerberos.utils.structs import Request
+from kerberos.utils.structs import RequestStructure
 
 @dataclass
 class Test_Request():
@@ -10,20 +10,20 @@ class Test_Request():
 
     #@property
     def test(self):
-        pl = Request(client_id=self.client_id , version=self.version, code=self.code, payload=self.payload)
+        req = RequestStructure(client_id=self.client_id , version=self.version, code=self.code, payload=self.payload)
         print(f"Encrypting the next payload:\n\tclient_id = ;{self.client_id};\n\tversion = {self.version}\n\tcode = {self.code}\n\tpayload = {self.payload}")
-        objectbytes = pl.pack()
-        newpl = pl.unpack(objectbytes)
-        print(f"Payload decryption:\n\tclient_id = ;{newpl.client_id};\n\tversion = {newpl.version}\n\tcode = {newpl.code}\n\tpayload = {newpl.payload}")
+        objectbytes = req.pack()
+        newreq = req.unpack(objectbytes)
+        print(f"Payload decryption:\n\tclient_id = ;{newreq.client_id};\n\tversion = {newreq.version}\n\tcode = {newreq.code}\n\tpayload = {newreq.payload}")
 
         #test the extracted parameters
-        if(self.client_id == newpl.client_id): print(f"Correct client_id")
+        if(self.client_id == newreq.client_id): print(f"Correct client_id")
         else: print(f"Incorrect client_id")
-        if(self.version == newpl.version): print(f"Correct version")
+        if(self.version == newreq.version): print(f"Correct version")
         else: print(f"Incorrect version")
-        if(self.code == newpl.code): print(f"Correct code")
+        if(self.code == newreq.code): print(f"Correct code")
         else: print(f"Incorrect code")
-        if(self.payload == newpl.payload): print(f"Correct payload")
+        if(self.payload == newreq.payload): print(f"Correct payload")
         else: print(f"Incorrect payload")
     
     
