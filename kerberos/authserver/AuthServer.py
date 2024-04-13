@@ -1,9 +1,9 @@
 import socket
 import sys
 import threading
-from urllib.request import Request
+from datetime import datetime
 from utils.enums import RequestEnums
-from utils.utils import read_port, update_txt_file
+from utils.utils import read_port, update_txt_file, read_txt_file
 from utils.structs import RequestStructure, Client
 
 PORT_FILE_PATH = "C:/git/Kerberos/AuthServer/port.info.txt"
@@ -91,7 +91,29 @@ class AuthServer:
         with self.file_lock:
             update_txt_file(self.clients_file, client_obj.print_as_row() + "\n")
 
-    #TODO: def read_clients_file(self) -> List[Client] #STOPPED HERE
+    def __read_clients_file(self) -> list[Client]:
+        """
+        Private function to read clients file and deliver the object to other functions (find client, remove, update...)
+
+        Returns:
+            list[Client]: list of Client objects
+        """
+        with self.file_lock: #read file with lock premit
+            content = read_txt_file(self.clients_file)
+        
+        client_list = []
+        for line in content.split('\n'):
+            if line.strip():  # Check if line is not empty
+                client_info = line.split(': ')
+                id, name, password_hash_str, date_time_str = client_info
+                password_hash = bytes.fromhex(password_hash_str)  # Convert hexadecimal string to bytes
+                date_time = datetime.strptime(date_time_str, '%Y-%m-%d %H:%M:%S')  # Parse datetime string
+                client = Client(id, name, password_hash, date_time)
+                client_list.append(client)
+        return client_list
+    
+    #TODO: def is_client_exist(client_obj: Client) -> bool: #STOPPED HERE!
+
 
 
     # ------- GETS -------

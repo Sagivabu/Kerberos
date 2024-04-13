@@ -39,3 +39,21 @@ def update_txt_file(file_path: str, string_to_write: str):
     except Exception as e:
         print(f"Failed to update txt file: '{file_path}', with the next string: '{string_to_write}'")
         raise
+
+def read_txt_file(file_path: str) -> str:
+    """
+    Read given txt file
+
+    Args:
+        file_path (str): path to the required file
+
+    Returns:
+        str: string of the txt file
+    """
+    try:
+        with open(file_path, 'r') as file:
+            content = file.read()
+        return content
+    except Exception as e:
+        print(f"Failed to read txt file: '{file_path}'")
+        raise
