@@ -78,6 +78,26 @@ class Client:
             string: in the next format -  "ID: Name: PasswordHash: LastSeen"
         """
         return f"{self.id}: {self.name}: {self.password_hash}: {self.lastseen.print_datetime()}"
+    
+    #compare to other Client object
+    def __eq__(self, other):
+        """
+        Override the equality comparison for Client objects.
+
+        Args:
+            other (Client): Another Client object to compare with.
+
+        Returns:
+            bool: True if the two Client objects are equal, False otherwise.
+        """
+        if isinstance(other, Client):
+            return (
+                self.id == other.id and
+                self.name == other.name and
+                self.password_hash == other.password_hash and
+                self.lastseen == other.lastseen
+            )
+        return False
 
 #Client's property
 class Lastseen:

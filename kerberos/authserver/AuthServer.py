@@ -81,15 +81,58 @@ class AuthServer:
             connection.close()
      
     # ------- Functions -------
-    def update_clients_file(self, client_obj: Client) -> None:
+    def add_new_client_to_file(self, client_obj: Client) -> None:
         """
-        Update the clients.txt file
+        Update the clients.txt file with new client info (new row)
 
         Args:
             client_obj (Client): info about client
         """
         with self.file_lock:
             update_txt_file(self.clients_file, client_obj.print_as_row() + "\n")
+            
+        
+    def  update_client_info(self, client_obj: Client):
+        """
+        Replace the 'lastseen' value in a row with a new value in the text file.
+
+        Args:
+            client_obj (Client): The Client object containing the id, name, and password_hash to search for.
+        """
+        try:
+            # Convert id, name, and password_hash to strings
+            id_str = client_obj.id.decode('utf-8')
+            name_str = client_obj.name
+            password_hash_str = client_obj.password_hash.hex()
+
+            # Read the content of the text file
+            with self.file_lock:
+                with open(self.clients_file, 'r') as file:
+                    lines = file.readlines()
+
+            # Find and replace the lastseen value in the row
+            for i, line in enumerate(lines):
+                line_parts = line.strip().split(': ')
+                if (
+                    id_str == line_parts[0] and
+                    name_str == line_parts[1] and
+                    password_hash_str == line_parts[2]
+                ):
+                    # Reconstruct the line with updated lastseen
+                    lines[i] = client_obj.print_as_row()
+                    break
+                
+            # Write the modified content back to the file
+            with self.file_lock:
+                with open(self.clients_file, 'w') as file:
+                    file.writelines(lines)
+                
+        except Exception as e:
+            print(f"Failed to update client info:\t'{client_obj}'")
+            raise
+            
+
+
 
     def __read_clients_file(self) -> list[Client]:
         """
@@ -112,7 +155,23 @@ class AuthServer:
                 client_list.append(client)
         return client_list
     
-    #TODO: def is_client_exist(client_obj: Client) -> bool: #STOPPED HERE!
+    def __is_client_exist(self, client_obj: Client) -> bool:
+        """
+        Return True if client_obj exists in client.txt
+
+        Args:
+            client_obj (Client): Client object
+
+        Returns:
+            bool: True if exists, False otherwise
+        """
+        client_list = self.__read_clients_file()
+        for client in client_list:
+            if client == client_obj:
+                return True
+        return False
+
+            
 
 
 
