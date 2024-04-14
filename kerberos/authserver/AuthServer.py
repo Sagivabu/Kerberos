@@ -1,10 +1,10 @@
 import socket
-import sys
 import threading
+import uuid
 from datetime import datetime
-from utils.enums import RequestEnums
+from utils.enums import RequestEnums, ResponseEnums
 from utils.utils import read_port, update_txt_file, read_txt_file
-from utils.structs import RequestStructure, Client
+from utils.structs import RequestStructure, ResponseStructure ,Client, Server
 
 PORT_FILE_PATH = "C:/git/Kerberos/AuthServer/port.info.txt"
 MSG_FILE_PATH = "C:/git/Kerberos/AuthServer/msg.info.txt"
@@ -54,20 +54,46 @@ class AuthServer:
 
             # Process the message based on the code
             match request_obj.code:
-                case RequestEnums.CLIENT_REGISTRATION: # Client Registration
+                case RequestEnums.CLIENT_REGISTRATION.value: # Client Registration
                     print("Received client registration request:")
-                    print("Client ID:", request_obj.client_id)
-                    print("Version:", request_obj.version)
                     print("Payload:", request_obj.payload)
-                    # TODO: Process registration request...
                     
-                case RequestEnums.SERVER_REGISTRATION: # Server Registration (NOTE: BONUS)
+                    try:
+                        client_name, client_password = request_obj.extract_name_password()
+                    except Exception as e: #if 
+                        print(f"Failed to extract name and password from given payload.\t{e}")
+                        response = ResponseStructure(request_obj.version, ResponseEnums.REGISTRATION_FAILED.value).pack() #prepare response as bytes
+                        connection.sendall(response)
+                    else:
+                        if not self.__is_client_exist(): #if client not exists in list
+                            try:
+                                # Create new 'Client' object
+                                new_uuid = uuid.uuid4()
+                                new_client = Client.from_plain_password(new_uuid, client_name, client_password, datetime.now())
+                                
+                                #add it to clients.txt file
+                                self.add_new_client_to_file(new_client)
+
+                                #send success response
+                                response = ResponseStructure(request_obj.version, ResponseEnums.REGISTRATION_SUCCESS.value, new_uuid).pack() #prepare response as bytes
+                                connection.sendall(response)
+                                
+                            except Exception as e:
+                                print(f"Failed to register new client with name: '{client_name}', password: '{client_password}'.\n{e}")
+                                response = ResponseStructure(request_obj.version, ResponseEnums.REGISTRATION_FAILED.value).pack() #prepare response as bytes
+                                connection.sendall(response)
+                        else:
+                            print(f"Failed to register new client, name '{client_name}' already exists in DB.")
+                            response = ResponseStructure(request_obj.version, ResponseEnums.REGISTRATION_FAILED.value).pack() #prepare response as bytes
+                            connection.sendall(response)
+                    
+                case RequestEnums.SERVER_REGISTRATION.value: # Server Registration (NOTE: BONUS)
                     pass
 
-                case RequestEnums.SERVER_LIST: # Server List (NOTE: BONUS)
+                case RequestEnums.SERVER_LIST.value: # Server List (NOTE: BONUS)
                     pass
 
-                case RequestEnums.SYMMETRY_KEY: # Symmetric key to connect a server
+                case RequestEnums.SYMMETRY_KEY.value: # Symmetric key to connect a server
                     print("Received Symmetric key to a server request:")
                     print("Client ID:", request_obj.client_id)
                     print("Version:", request_obj.version)
@@ -90,8 +116,7 @@ class AuthServer:
         """
         with self.file_lock:
             update_txt_file(self.clients_file, client_obj.print_as_row() + "\n")
-            
-        
+              
     def  update_client_info(self, client_obj: Client):
         """
         Replace the 'lastseen' value in a row with a new value in the text file.
@@ -130,9 +155,6 @@ class AuthServer:
         except Exception as e:
             print(f"Failed to update client info:\t'{client_obj}'")
             raise
-            
-
-
 
     def __read_clients_file(self) -> list[Client]:
         """
@@ -157,7 +179,7 @@ class AuthServer:
     
     def __is_client_exist(self, client_obj: Client) -> bool:
         """
-        Return True if client_obj exists in client.txt
+        Return True if client_obj exists in client.txt based on client_name ONLY
 
         Args:
             client_obj (Client): Client object
@@ -167,11 +189,9 @@ class AuthServer:
         """
         client_list = self.__read_clients_file()
         for client in client_list:
-            if client == client_obj:
+            if client.name == client_obj.name: #NOTE: It was requested in the project to find if only same name exists
                 return True
         return False
-
-            
 
 
 
@@ -213,6 +233,10 @@ class AuthServer:
         sock.bind(server_address)
 
         sock.listen(self.max_connections)
+        
+        #load server and clients info
+        client_list = self.__read_clients_file() #NOTE: required to load the client's into the RAM from start
+        server = Server.read_from_txt(self.msg_file)
 
         try:
             while True:

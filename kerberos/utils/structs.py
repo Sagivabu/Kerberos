@@ -3,14 +3,58 @@ import datetime
 import hashlib
 from typing import Optional
 
+class ResponseStructure:
+    def __init__(self, version: str, code: str, payload: Optional[str]) -> None:
+        self.version = version[:1]  # Limit to 1 byte
+        self.code = code[:2]  # Limit to 2 bytes
+        self.payload_size = len(payload.encode('utf-8')) if payload else 0 # len() return int (= 4 bytes)
+        self.payload = payload
+        
+    # ---------- PACK / UNPACK ----------
+    def pack(self) -> bytes:
+        ''' object method to pack the object'''
+        version_bytes = self.version.encode('utf-8')
+        code_bytes = self.code.encode('utf-8')
+
+        if self.payload is not None:
+            payload_bytes = self.payload.encode('utf-8')
+        else:
+            payload_bytes = b''
+
+        format_string = f'<1s2sI{len(payload_bytes)}s'
+        return struct.pack(format_string, version_bytes, code_bytes, self.payload_size, payload_bytes)
+    
+    @classmethod
+    def unpack(cls, data: bytes) -> 'ResponseStructure':
+        ''' class method to unpack data and creating new object \n
+            'data' - bytes object (=usually ResponseStructure object that is after 'pack' method)\n
+            return - new ResponseStructure object'''
+        format_string = '<1s2sI'
+        size_of_header = struct.calcsize(format_string)
+        header = struct.unpack(format_string, data[:size_of_header])
+        payload = data[size_of_header:]
+        return cls(header[0].decode('utf-8'), header[1].decode('utf-8'), payload.decode('utf-8'))
+    
+    # ---------- functions related to Specific Codes ----------
+    def extract_client_id(self) -> str: # Code 1600 (Registration SUCCESS)
+        # Validate that the payload contains exactly 16 characters
+        if len(self.payload) != 16:
+            raise ValueError("Payload must contain exactly 16 characters")
+
+        return self.payload
+        
+        
+        
 class RequestStructure:
-    def __init__(self, client_id: str, version: str, code: str, payload: Optional[str]):
+    def __init__(self, client_id: str, version: str, code: str, payload: Optional[str]) -> None:
         self.client_id = client_id[:16]  # Limit to 16 bytes
         self.version = version[:1]  # Limit to 1 byte
         self.code = code[:2]  # Limit to 2 bytes
         self.payload_size = len(payload.encode('utf-8')) if payload else 0 # len() return int (= 4 bytes)
         self.payload = payload
-
+        
+    
+    # ---------- PACK / UNPACK ----------
     def pack(self) -> bytes:
         ''' object method to pack the object'''
         client_id_bytes = self.client_id.encode('utf-8')
@@ -28,16 +72,67 @@ class RequestStructure:
     @classmethod
     def unpack(cls, data: bytes) -> 'RequestStructure':
         ''' class method to unpack data and creating new object \n
-            'data' - bytes object (=usually Payload object that is after 'pack' method)\n
-            return - new Payload object'''
+            'data' - bytes object (=usually RequestStructure object that is after 'pack' method)\n
+            return - new RequestStructure object'''
         format_string = '<16s1s2sI'
         size_of_header = struct.calcsize(format_string)
         header = struct.unpack(format_string, data[:size_of_header])
         payload = data[size_of_header:]
         return cls(header[0].decode('utf-8'), header[1].decode('utf-8'), header[2].decode('utf-8'), payload.decode('utf-8'))
     
+    
+    # ---------- functions related to Specific Codes ----------
+    def extract_name_password(self) -> tuple[str, str]: # Code 1024 (Registration)
+        """
+        Validate it is "Registration" request and extract name and password from payload
+
+        Returns:
+            tuple[str, str]: return (name, password) as tuple
+        """
+        # Find the index of the first null terminator in the payload
+        null_index = self.payload.find('\x00')
+        if null_index == -1:
+            raise ValueError("Payload does not contain null terminator")
+
+        # Extract the name and password from the payload
+        parts = self.payload.split('\x00') #separate by null terminated character
+        if len(parts) != 2: #VALIDATION: only 2 strings should exists
+            raise ValueError("Payload does not contain exactly two strings")
+
+        name = parts[0].strip()
+        password = parts[1].strip()
+        return name, password
+    
+    def extract_server_id_nonce(self) -> tuple[bytes, bytes]: # Code 1027 (Symmetric key for a server)
+        """
+        Validate it is "Symmetric key for a server" request and extract server_id and nounce from payload
+
+        Returns:
+            tuple[bytes, bytes]: return (server_id, nounce) as tuple of bytes
+        """
+        # Find the index of the first null terminator in the payload
+        null_index = self.payload.find('\x00')
+        if null_index == -1:
+            raise ValueError("Payload does not contain null terminator")
+
+        # Extract the server ID and nonce from the payload
+        parts = self.payload.split('\x00')
+        if len(parts) != 2:
+            raise ValueError("Payload does not contain exactly two parameters")
+
+        server_id = parts[0].encode('utf-8')
+        nonce = parts[1].encode('utf-8')
+
+        # Validate the lengths of the extracted parameters
+        if len(server_id) != 16:
+            raise ValueError("Server ID must be exactly 16 bytes")
+        if len(nonce) != 8:
+            raise ValueError("Nonce must be exactly 8 bytes")
+
+        return server_id, nonce
+    
 class Client:
-    def __init__(self, id: str, name: str, password_hash: bytes, datetime_obj: datetime.datetime):
+    def __init__(self, id: str, name: str, password_hash: bytes, datetime_obj: datetime.datetime) -> None:
         """
         Creat Client's object
 
@@ -96,6 +191,75 @@ class Client:
                 self.name == other.name and
                 self.password_hash == other.password_hash and
                 self.lastseen == other.lastseen
+            )
+        return False
+
+class Server:
+    def __init__(self, server_ip: str, server_port: int, server_name: str, server_id: str, symmetric_key: str):
+        """
+        Create a Server object.
+
+        Args:
+            server_ip (str): The server's IP address.
+            server_port (int): The server's port number.
+            server_name (str): The server's name.
+            server_id (str): The server's unique ID in ASCII where every 2 chars represent 8 bits in hex.
+            symmetric_key (str): The long-term symmetric key for the server in Base64 format.
+        """
+        self.server_ip = server_ip
+        self.server_port = server_port
+        self.server_name = server_name[:255]  # Limit to 255 characters
+        self.server_id = server_id
+        self.symmetric_key = symmetric_key
+
+    def write_to_txt(self, file_path: str):
+        """
+        Write the server details to a text file in the specified format.
+
+        Args:
+            file_path (str): The path to the text file.
+        """
+        with open(file_path, 'w') as file:
+            file.write(f"{self.server_ip}:{self.server_port}\n")
+            file.write(f"{self.server_name}\n")
+            file.write(f"{self.server_id}\n")
+            file.write(f"{self.symmetric_key}\n")
+
+    @classmethod
+    def read_from_txt(cls, file_path: str) -> 'Server':
+        """
+        Read the server details from a text file and create a Server object.
+
+        Args:
+            file_path (str): The path to the text file.
+
+        Returns:
+            Server: The Server object created from the text file.
+        """
+        with open(file_path, 'r') as file:
+            server_ip, server_port = file.readline().strip().split(':')
+            server_name = file.readline().strip()
+            server_id = file.readline().strip()
+            symmetric_key = file.readline().strip()
+        return cls(server_ip, int(server_port), server_name, server_id, symmetric_key)
+
+    def __eq__(self, other) -> bool:
+        """
+        Compare two Server objects for equality.
+
+        Args:
+            other (Server): Another Server object to compare with.
+
+        Returns:
+            bool: True if the two Server objects are equal, False otherwise.
+        """
+        if isinstance(other, Server):
+            return (
+                self.server_ip == other.server_ip and
+                self.server_port == other.server_port and
+                self.server_name == other.server_name and
+                self.server_id == other.server_id and
+                self.symmetric_key == other.symmetric_key
             )
         return False
 

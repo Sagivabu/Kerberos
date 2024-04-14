@@ -11,7 +11,7 @@ class RequestEnums(Enum): #client -> server
     DELIVER_SYMMETRY_KEY = 1028 #deliver symmetry key to server
     MESSAGE_TO_SERVER = 1029 #send message
     
-class Response(Enum): #server -> client
+class ResponseEnums(Enum): #server -> client
     #Auth server
     REGISTRATION_SUCCESS = 1600 #client registration
     REGISTRATION_FAILED = 1601 #server registration
