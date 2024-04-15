@@ -2,6 +2,9 @@ import struct
 import datetime
 import hashlib
 from typing import Optional
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import unpad, pad
+from datetime import datetime, timezone
 
 class ResponseStructure:
     def __init__(self, version: str, code: str, payload: Optional[str]) -> None:
@@ -42,8 +45,6 @@ class ResponseStructure:
             raise ValueError("Payload must contain exactly 16 characters")
 
         return self.payload
-        
-        
         
 class RequestStructure:
     def __init__(self, client_id: str, version: str, code: str, payload: Optional[str]) -> None:
@@ -134,7 +135,7 @@ class RequestStructure:
 class Client:
     def __init__(self, id: str, name: str, password_hash: bytes, datetime_obj: datetime.datetime) -> None:
         """
-        Creat Client's object
+        Create Client's object
 
         Args:
             id (str): 16 bytes of id 
@@ -303,3 +304,102 @@ class Lastseen:
 
     def print_datetime(self):
         return f"{self.year}-{self.month:02d}-{self.day:02d} {self.hour:02d}:{self.minute:02d}:{self.second:02d}"
+    
+#part of Response 1603 - sending to the client an encrypted symmetric key between the server and the client.
+class EncryptedKey:
+    def __init__(self, encrypted_key_iv: bytes, encrypted_nonce: bytes, encrypted_server_key: bytes):
+        self.encrypted_key_iv = encrypted_key_iv
+        self.encrypted_nonce = encrypted_nonce
+        self.encrypted_server_key = encrypted_server_key
+
+    def pack(self) -> bytes:
+        ''' Pack the components into a binary representation '''
+        if len(self.encrypted_key_iv) != 16:
+            raise ValueError("The encrypted key IV must be 16 bytes long")
+        if len(self.encrypted_nonce) != 8:
+            raise ValueError("The encrypted nonce must be 8 bytes long")
+        if len(self.encrypted_server_key) != 32:
+            raise ValueError("The encrypted server key must be 32 bytes long")
+
+        return struct.pack('<16s8s32s', self.encrypted_key_iv, self.encrypted_nonce, self.encrypted_server_key)
+
+    @classmethod
+    def unpack(cls, data: bytes) -> 'EncryptedKey':
+        ''' Unpack the binary representation into an EncryptedKey object '''
+        if len(data) != 56:
+            raise ValueError("The data must be 56 bytes long")
+
+        encrypted_key_iv, encrypted_nonce, encrypted_server_key = struct.unpack('<16s8s32s', data)
+        return cls(encrypted_key_iv, encrypted_nonce, encrypted_server_key)
+
+#part of Response 1603 - sending to the client an encrypted ticket to pass to server.
+class Ticket:
+    def __init__(self, server_version: int, client_id: bytes, server_id: bytes, ticket_iv: bytes, aes_key: bytes, expiration_time: int):
+        self.server_version = server_version
+        self.client_id = client_id
+        self.server_id = server_id
+        self.creation_time = int(datetime.now(timezone.utc).timestamp())
+        self.ticket_iv = ticket_iv
+        self.aes_key = aes_key
+        self.expiration_time = expiration_time
+        
+    # --------- pack / unpack ---------
+    def pack(self) -> bytes:
+        ''' Pack the Ticket object into bytes '''
+        return struct.pack('<B16s16sQ16s32sQ',
+                           self.server_version,
+                           self.client_id,
+                           self.server_id,
+                           self.creation_time,
+                           self.ticket_iv,
+                           self.aes_key,
+                           self.expiration_time)
+
+    @classmethod
+    def unpack(cls, data: bytes) -> 'Ticket':
+        ''' Unpack bytes into a Ticket object '''
+        unpacked_data = struct.unpack('<B16s16sQ16s32sQ', data)
+        return cls(*unpacked_data)
+
+    # --------- encrypt / decrypt ---------
+    def encrypt(self, server_aes_key: bytes) -> bytes: #Special encrypt function because I'm encrypting the Ticket as whole and not each parameter
+        ''' Encrypt the Ticket object using server_aes_key '''
+        cipher = AES.new(server_aes_key, AES.MODE_CBC, self.ticket_iv)
+        plaintext = self.pack()
+        padded_plaintext = pad(plaintext, AES.block_size)
+        return cipher.encrypt(padded_plaintext)
+    
+    @classmethod
+    def from_ciphertext(cls, ciphertext: bytes, server_aes_key: bytes) -> 'Ticket':
+        ''' Decrypt ciphertext using server_aes_key and create Ticket object '''
+        cipher = AES.new(server_aes_key, AES.MODE_CBC, ciphertext[:16])
+        decrypted_data = unpad(cipher.decrypt(ciphertext[16:]), AES.block_size)
+        return cls.unpack(decrypted_data)
+      
+class SymmetricKeyResponse:
+    def __init__(self, client_id: bytes, encrypted_key: EncryptedKey, encrypted_ticket: bytes):
+        self.client_id = client_id
+        self.encrypted_key = encrypted_key
+        self.encrypted_ticket = encrypted_ticket
+
+    def pack(self) -> bytes:
+        ''' Pack the SymmetricKeyResponse object into bytes '''
+        client_id_len = len(self.client_id)
+        packed_encrypted_key = self.encrypted_key.pack()
+        return struct.pack(f'<16sHH', self.client_id, len(packed_encrypted_key), len(self.encrypted_ticket)) + packed_encrypted_key + self.encrypted_ticket  # Include the packed encrypted ticket data
+
+    @classmethod
+    def unpack(cls, data: bytes, server_aes_key: bytes) -> 'SymmetricKeyResponse':
+        ''' Unpack bytes into a SymmetricKeyResponse object '''
+        client_id, encrypted_key_len, encrypted_ticket_len = struct.unpack_from('<16sHH', data, 0)
+        client_id = client_id[:16]  # Ensure client_id is 16 bytes
+        encrypted_key_data = data[16:16+encrypted_key_len]
+        encrypted_ticket_data = data[16+encrypted_key_len:]
+        encrypted_key = EncryptedKey.unpack(encrypted_key_data)
+        return cls(client_id, encrypted_key, encrypted_ticket_data)
+
+    
+
+    
+
+
