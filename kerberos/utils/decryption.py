@@ -20,8 +20,8 @@ def decrypt_with_aes_cbc(key: bytes, iv: bytes, ciphertext: bytes) -> bytes:
     Decrypt ciphertext using AES-CBC with the given key and IV
 
     Args:
-        key (bytes): usually the 'client_key'
-        iv (bytes): usually the 'decrypted_key_iv'
+        key (bytes): they key that encrypted the ciphertext (usually the 'client_key')
+        iv (bytes): the IV used to encrypt the ciphertext
         ciphertext (bytes): the text to decrypt
 
     Returns:

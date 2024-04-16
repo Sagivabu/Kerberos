@@ -41,9 +41,8 @@ class ResponseStructure:
     # ---------- functions related to Specific Codes ----------
     def extract_client_id(self) -> str: # Code 1600 (Registration SUCCESS)
         # Validate that the payload contains exactly 16 characters
-        if len(self.payload) != 16:
+        if not self.payload or len(self.payload) != 16:
             raise ValueError("Payload must contain exactly 16 characters")
-
         return self.payload
         
 class RequestStructure:
@@ -90,6 +89,9 @@ class RequestStructure:
         Returns:
             tuple[str, str]: return (name, password) as tuple
         """
+        if not self.payload:
+            raise ValueError("Payload is None")
+        
         # Find the index of the first null terminator in the payload
         null_index = self.payload.find('\x00')
         if null_index == -1:
@@ -104,13 +106,16 @@ class RequestStructure:
         password = parts[1].strip()
         return name, password
     
-    def extract_server_id_nonce(self) -> tuple[bytes, bytes]: # Code 1027 (Symmetric key for a server)
+    def extract_server_id_nonce(self) -> tuple[str, str]:
         """
-        Validate it is "Symmetric key for a server" request and extract server_id and nounce from payload
+        Validate it is "Symmetric key for a server" request and extract server_id and nonce from payload
 
         Returns:
-            tuple[bytes, bytes]: return (server_id, nounce) as tuple of bytes
+            tuple[str, str]: return (server_id, nonce) as tuple of strings
         """
+        if not self.payload:
+            raise ValueError("Payload is None")
+        
         # Find the index of the first null terminator in the payload
         null_index = self.payload.find('\x00')
         if null_index == -1:
@@ -121,8 +126,8 @@ class RequestStructure:
         if len(parts) != 2:
             raise ValueError("Payload does not contain exactly two parameters")
 
-        server_id = parts[0].encode('utf-8')
-        nonce = parts[1].encode('utf-8')
+        server_id = parts[0]
+        nonce = parts[1]
 
         # Validate the lengths of the extracted parameters
         if len(server_id) != 16:
@@ -133,7 +138,7 @@ class RequestStructure:
         return server_id, nonce
     
 class Client:
-    def __init__(self, id: str, name: str, password_hash: bytes, datetime_obj: datetime.datetime) -> None:
+    def __init__(self, id: str, name: str, password_hash: bytes, datetime_obj: datetime) -> None:
         """
         Create Client's object
 
@@ -150,7 +155,7 @@ class Client:
         self.lastseen = Lastseen.from_datetime(datetime_obj)
 
     @classmethod
-    def from_plain_password(cls, id: str, name: str, password: str, datetime_obj: datetime.datetime):
+    def from_plain_password(cls, id: str, name: str, password: str, datetime_obj: datetime):
         """
         Create Client's object from plain password (before hashing)
 
@@ -214,7 +219,7 @@ class Client:
         return False
 
 class Server:
-    def __init__(self, server_ip: str, server_port: int, server_name: str, server_id: str, symmetric_key: str):
+    def __init__(self, server_ip: str, server_port: int, server_name: str, server_id: str, symmetric_key: str, version: int = 1):
         """
         Create a Server object.
 
@@ -230,6 +235,7 @@ class Server:
         self.server_name = server_name[:255]  # Limit to 255 characters
         self.server_id = server_id
         self.symmetric_key = symmetric_key
+        self.version = version
 
     def write_to_txt(self, file_path: str):
         """
@@ -281,6 +287,9 @@ class Server:
             )
         return False
 
+    def set_version(self, version: int) -> None:
+        self.version = version
+
 #Client's property
 class Lastseen:
     """ Part of the Client's Information """
@@ -294,12 +303,12 @@ class Lastseen:
         self._validate_datetime()
 
     @classmethod
-    def from_datetime(cls, datetime_obj: datetime.datetime):
+    def from_datetime(cls, datetime_obj: datetime):
         return cls(datetime_obj.year, datetime_obj.month, datetime_obj.day, datetime_obj.hour, datetime_obj.minute, datetime_obj.second)
 
     def _validate_datetime(self):
         try:
-            datetime.datetime(self.year, self.month, self.day, self.hour, self.minute, self.second)
+            datetime(self.year, self.month, self.day, self.hour, self.minute, self.second)
         except ValueError as e:
             raise ValueError("Invalid date or time.") from e
 
@@ -351,69 +360,75 @@ class EncryptedKey:
 
 #part of Response 1603 - sending to the client an encrypted ticket to pass to server.
 class Ticket:
-    def __init__(self, server_version: int, client_id: bytes, server_id: bytes, ticket_iv: bytes, aes_key: bytes, expiration_time: int):
+    def __init__(self, server_version: int, client_id: bytes, server_id: bytes, creation_time: bytes, ticket_iv: bytes, encrypted_aes_key: bytes, encrypted_expiration_time: bytes):
         self.server_version = server_version
         self.client_id = client_id
         self.server_id = server_id
-        self.creation_time = int(datetime.now(timezone.utc).timestamp())
+        self.creation_time = creation_time
         self.ticket_iv = ticket_iv
-        self.aes_key = aes_key
-        self.expiration_time = expiration_time
+        self.encrypted_aes_key = encrypted_aes_key
+        self.encrypted_expiration_time = encrypted_expiration_time
         
     # --------- pack / unpack ---------
     def pack(self) -> bytes:
-        ''' Pack the Ticket object into bytes '''
-        return struct.pack('<B16s16sQ16s32sQ',
-                           self.server_version,
-                           self.client_id,
-                           self.server_id,
-                           self.creation_time,
-                           self.ticket_iv,
-                           self.aes_key,
-                           self.expiration_time)
-
-    @classmethod
-    def unpack(cls, data: bytes) -> 'Ticket':
-        ''' Unpack bytes into a Ticket object '''
-        unpacked_data = struct.unpack('<B16s16sQ16s32sQ', data)
-        return cls(*unpacked_data)
-
-    # --------- encrypt / decrypt ---------
-    def encrypt(self, server_aes_key: bytes) -> bytes: #Special encrypt function because I'm encrypting the Ticket as whole and not each parameter
-        ''' Encrypt the Ticket object using server_aes_key '''
-        cipher = AES.new(server_aes_key, AES.MODE_CBC, self.ticket_iv)
-        plaintext = self.pack()
-        padded_plaintext = pad(plaintext, AES.block_size)
-        return cipher.encrypt(padded_plaintext)
+        """ Pack the Ticket object into a binary representation """
+        # Define the format string for packing the data
+        format_string = '<B16s16s8s16s32s8s'
+        
+        # Pack the data into bytes
+        packed_data = struct.pack(format_string,
+                                  self.server_version,
+                                  self.client_id,
+                                  self.server_id,
+                                  self.creation_time,
+                                  self.ticket_iv,
+                                  self.encrypted_aes_key,
+                                  self.encrypted_expiration_time)
+        
+        return packed_data
     
     @classmethod
-    def from_ciphertext(cls, ciphertext: bytes, server_aes_key: bytes) -> 'Ticket':
-        ''' Decrypt ciphertext using server_aes_key and create Ticket object '''
-        cipher = AES.new(server_aes_key, AES.MODE_CBC, ciphertext[:16])
-        decrypted_data = unpad(cipher.decrypt(ciphertext[16:]), AES.block_size)
-        return cls.unpack(decrypted_data)
+    def unpack(cls, data: bytes) -> 'Ticket':
+        """ Unpack binary data into a Ticket object """
+        # Define the format string for unpacking the data
+        format_string = '<B16s16s8s16s32s8s'
+        
+        # Unpack the data into individual fields
+        server_version, client_id, server_id, creation_time, ticket_iv, encrypted_aes_key, encrypted_expiration_time = struct.unpack(format_string, data)
+        
+        # Create a new Ticket object with the unpacked data
+        return cls(server_version, client_id, server_id, creation_time, ticket_iv, encrypted_aes_key, encrypted_expiration_time)
       
 class SymmetricKeyResponse:
-    def __init__(self, client_id: bytes, encrypted_key: EncryptedKey, encrypted_ticket: bytes):
+    def __init__(self, client_id: bytes, encrypted_key: EncryptedKey, ticket: Ticket):
         self.client_id = client_id
         self.encrypted_key = encrypted_key
-        self.encrypted_ticket = encrypted_ticket
+        self.ticket = ticket
 
     def pack(self) -> bytes:
-        ''' Pack the SymmetricKeyResponse object into bytes '''
-        client_id_len = len(self.client_id)
+        """ Pack the SymmetricKeyResponse object into a binary representation """
+        # Pack the client ID, encrypted key, and ticket
+        packed_client_id = self.client_id
         packed_encrypted_key = self.encrypted_key.pack()
-        return struct.pack(f'<16sHH', self.client_id, len(packed_encrypted_key), len(self.encrypted_ticket)) + packed_encrypted_key + self.encrypted_ticket  # Include the packed encrypted ticket data
+        packed_ticket = self.ticket.pack()
+
+        # Combine the packed data
+        packed_data = packed_client_id + packed_encrypted_key + packed_ticket
+        
+        return packed_data
 
     @classmethod
-    def unpack(cls, data: bytes, server_aes_key: bytes) -> 'SymmetricKeyResponse':
-        ''' Unpack bytes into a SymmetricKeyResponse object '''
-        client_id, encrypted_key_len, encrypted_ticket_len = struct.unpack_from('<16sHH', data, 0)
-        client_id = client_id[:16]  # Ensure client_id is 16 bytes
-        encrypted_key_data = data[16:16+encrypted_key_len]
-        encrypted_ticket_data = data[16+encrypted_key_len:]
-        encrypted_key = EncryptedKey.unpack(encrypted_key_data)
-        return cls(client_id, encrypted_key, encrypted_ticket_data)
+    def unpack(cls, data: bytes) -> 'SymmetricKeyResponse':
+        """ Unpack binary data into a SymmetricKeyResponse object """
+        # Unpack the client ID
+        client_id = data[:16]
+        # Unpack the encrypted key
+        encrypted_key = EncryptedKey.unpack(data[16:72])
+        # Unpack the ticket
+        ticket = Ticket.unpack(data[72:])
+        
+        # Create a new SymmetricKeyResponse object with the unpacked data
+        return cls(client_id, encrypted_key, ticket)
 
     
 

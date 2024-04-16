@@ -1,19 +1,21 @@
+import os
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
 from Crypto.Util.Padding import pad
 import hashlib
 
-def generate_client_key(password_hash: bytes) -> bytes:
-    """_summary_
+def derive_encryption_key(based_on: bytes) -> bytes:
+    """
+    Derive a key for encryption (e.g 'client_key', 'msg_server_key')
 
     Args:
-        password_hash (bytes): client's password_hash
+        based_on (bytes): a parameter to based the key on (e.g: client's password_hash, server's symmetric_key)
 
     Returns:
-        bytes: key based on the given password_hash
+        bytes: they encryption key
     """
     salt = b'Sagiv_Abu_206122459_Auth_Server' #salt - add uniqueness to the hashing process
-    return hashlib.pbkdf2_hmac('sha256', password_hash, salt, 100000)
+    return hashlib.pbkdf2_hmac('sha256', based_on, salt, 100000)
 
 def generate_random_iv() -> bytes:
     """
@@ -23,6 +25,10 @@ def generate_random_iv() -> bytes:
         bytes: return 16 random bytes
     """
     return get_random_bytes(16)
+
+def generate_aes_key() -> bytes:
+    """Generate a random AES key of 32 bytes"""
+    return os.urandom(32)
 
 def encrypt_with_aes_cbc(key: bytes, iv: bytes, plaintext: bytes) -> bytes:
     """

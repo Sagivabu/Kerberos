@@ -1,11 +1,11 @@
 import socket
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from utils.enums import RequestEnums, ResponseEnums
-from utils.utils import read_port, update_txt_file, read_txt_file
+from utils.utils import read_port, update_txt_file, read_txt_file, datetime_to_bytes
 from utils.structs import RequestStructure, ResponseStructure ,Client, Server, EncryptedKey, Ticket, SymmetricKeyResponse
-from utils.encryption import encrypt_with_aes_cbc
+from utils.encryption import encrypt_with_aes_cbc, derive_encryption_key, generate_random_iv, generate_aes_key
 
 
 PORT_FILE_PATH = "C:/git/Kerberos/AuthServer/port.info.txt"
@@ -18,13 +18,16 @@ class AuthServer:
                 server_connections: int = 10, \
                 port_file_location: str = PORT_FILE_PATH, \
                 msg_file_location: str = MSG_FILE_PATH, \
-                clients_file_location: str = CLIENTS_FILE_PATH):
+                clients_file_location: str = CLIENTS_FILE_PATH,
+                version: int = 1):
         self.server_name = server_name 
         self.server_default_port = server_default_port
         self.__server_max_connections = server_connections
         self.__port_file_location = port_file_location
         self.__msg_file_location = msg_file_location
         self.__clients_file_location = clients_file_location
+        self.__ticket_expiration_time:timedelta = timedelta(hours=1)
+        self.__version = version
 
         #files locks
         self.__client_file_lock = threading.Lock() # Define a lock to manage the threads that attend to clients.txt file. NOTE: the lock is per instance of the class!
@@ -102,7 +105,7 @@ class AuthServer:
                     print("Payload:", request_obj.payload)
 
                     try: #get request's payload
-                        server_id, nonce = request_obj.extract_server_id_nonce() #TODO: STOPPED HERE ~ Why return it in bytes??
+                        server_id, nonce = request_obj.extract_server_id_nonce()
                     except Exception as e: #if 
                         print(f"Failed to extract server_id and nonce from given payload.\t{e}")
                         response = ResponseStructure(request_obj.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
@@ -117,20 +120,47 @@ class AuthServer:
                         the_client = Client.find_client(client_list, request_obj.client_id)
                         the_server = Server.find_server(server_list, server_id)
 
+                        # If server not found return error
                         if not the_server:
                             print(f"Failed to find required server in DB following given server_id: '{server_id}'. Server may not be exist.")
                             response = ResponseStructure(request_obj.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
                             connection.sendall(response)
+                        
+                        # If Client not found return error (Can happen only in case the client is not registered in DB)
+                        elif not the_client:
+                            print(f"Failed to find the client information in DB following client_id from request header: '{request_obj.client_id}'. Client may not be registered.")
+                            response = ResponseStructure(request_obj.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
+                            connection.sendall(response)
+                        
+                        else:
+                            # Prepare the response with the server's information
+                            AES_key = generate_aes_key() # Generate AES_key for the server-client communication
 
-                        #Prepare the response with the server's information
+                            #--1-- Prepare the EncryptedKey object
+                            client_key = derive_encryption_key(the_client.password_hash) # Step 1: Derive client key based on the client's password_hash
+                            encrypted_key_iv = generate_random_iv() # Step 2: Generate random IV for the encryption of the nonce and AES_key
+                            encrypted_nonce = encrypt_with_aes_cbc(client_key, encrypted_key_iv, nonce.encode()) # Step 3: Encrypt the nonce
+                            encrypted_aes_key = encrypt_with_aes_cbc(client_key, encrypted_key_iv, AES_key) # Step 4: Encrypt the AES_key
+                            encrypted_key = EncryptedKey(encrypted_key_iv=encrypted_key_iv,
+                                         encrypted_nonce=encrypted_nonce,
+                                         encrypted_server_key=encrypted_aes_key)
 
-                        #--1-- Prepare the EncryptedKey object
-                        encrypted_noonce = encrypt_with_aes_cbc(b'')
-                        EncryptedKey()
-
-                        #--2-- Prepare the Ticket object
-
-                        #--3-- Prepare the SymmetricKeyResponse object
+                            #--2-- Prepare the Ticket object
+                            msg_server_key = derive_encryption_key(the_server.symmetric_key.encode()) # Step 1: Derive msg server key based on the server's symmetric key
+                            ticket_iv = generate_random_iv() # Step 2: Generate random IV for the encryption of the Expiration_time and AES_key
+                            creation_time = datetime.now() # Step 3: Define creation_time
+                            expiration_time = creation_time + self.ticket_expiration_time # Step 4: Create the expiration time based on the creation time and the Auth_server deltas
+                            creation_time_8_bytes = datetime_to_bytes(creation_time)
+                            expiration_time_8_bytes = datetime_to_bytes(expiration_time)
+                            server_encrypted_aes_key = encrypt_with_aes_cbc(msg_server_key, ticket_iv, AES_key) # Step 5: Encrypt the AES key
+                            encrypted_expiration_time = encrypt_with_aes_cbc(msg_server_key, ticket_iv, expiration_time_8_bytes) # Step 6: Encrypt the Expiration_time
+                            ticket = Ticket(server_version=self.version, #NOTE: XXX: Not sure which version (Auth_server / msg_server)
+                                            client_id=the_client.id,
+                                            server_id=the_server.server_id,
+                                            creation_time = creation_time
+                                            ticket_iv= ticket_iv,
+                                            aes_key=) #TODO: STOPPED HERE BECAUSE SEGGEV IS YELLING AT ME!
+                            #--3-- Prepare the SymmetricKeyResponse object
 
                     
                 case _:
@@ -264,6 +294,10 @@ class AuthServer:
 
     # ------- GETS -------
     @property
+    def version(self):
+        return self.__version
+    
+    @property
     def max_connections(self):
         return self.__server_max_connections
     
@@ -287,6 +321,18 @@ class AuthServer:
     def server_file_lock(self):
         return self.__msg_file_lock
     
+    @property
+    def ticket_expiration_time(self):
+        return self.__ticket_expiration_time
+    
+    # ------- GETS -------
+    def set_version(self, version: int) -> None:
+        self.__version = version
+    
+    def set_ticket_expiration_time(self, timedelta_obj: timedelta) -> None:
+        self.__ticket_expiration_time = timedelta_obj
+
+    
 
 
 
@@ -307,7 +353,7 @@ class AuthServer:
         
         #load server and clients info
         client_list = self.__read_clients_file() #NOTE: required to load the client's into the RAM from start
-        server_list = Server.from_file(self.msg_file)
+        server_list = self.__read_server_file()
 
         try:
             while True:

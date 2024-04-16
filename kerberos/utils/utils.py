@@ -1,5 +1,8 @@
 
 
+from datetime import datetime
+
+
 MIN_PORT_VALUE = 0
 MAX_PORT_VALUE = 65535
 
@@ -59,3 +62,20 @@ def read_txt_file(file_path: str) -> str:
     except Exception as e:
         print(f"Failed to read txt file: '{file_path}'")
         raise
+
+
+def datetime_to_bytes(dt: datetime) -> bytes:
+    """
+    Convert datetime object to timestamp of 8 bytes (for further use)
+
+    Args:
+        dt (datetime): datetime object to convert to 8 bytes timestamp
+
+    Returns:
+        bytes: 8 bytes timestamp
+    """
+    # Convert the datetime object to a Unix timestamp
+    timestamp = int(dt.timestamp())
+    
+    # Convert the timestamp to bytes (using little endian byte order)
+    return timestamp.to_bytes(8, byteorder='little')
