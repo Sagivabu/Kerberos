@@ -1,7 +1,7 @@
 import struct
 import datetime
 import hashlib
-from typing import Optional
+from typing import Optional, List
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad, pad
 from datetime import datetime, timezone
@@ -175,6 +175,24 @@ class Client:
         """
         return f"{self.id}: {self.name}: {self.password_hash}: {self.lastseen.print_datetime()}"
     
+    @staticmethod
+    def find_client(client_list: List['Client'], client_id: str) -> Optional['Client']:
+        """
+        Find the client object with the given ID in the list of client objects.
+
+        Args:
+            client_list (List[Client]): List of Client objects
+            client_id (str): ID of the client to find
+
+        Returns:
+            Optional[Client]: The client object if found, None otherwise
+        """
+        client_id_bytes = client_id.encode('utf-8')[:16]  # Limit to 16 bytes
+        for client in client_list:
+            if client.id == client_id_bytes:
+                return client
+        return None
+
     #compare to other Client object
     def __eq__(self, other):
         """
@@ -225,24 +243,23 @@ class Server:
             file.write(f"{self.server_name}\n")
             file.write(f"{self.server_id}\n")
             file.write(f"{self.symmetric_key}\n")
-
-    @classmethod
-    def read_from_txt(cls, file_path: str) -> 'Server':
+    
+    @staticmethod
+    def find_server(server_list: List['Server'], server_id: str) -> Optional['Server']:
         """
-        Read the server details from a text file and create a Server object.
+        Find the server object with the given ID in the list of server objects.
 
         Args:
-            file_path (str): The path to the text file.
+            server_list (List[Server]): List of Server objects
+            server_id (str): ID of the server to find
 
         Returns:
-            Server: The Server object created from the text file.
+            Optional[Server]: The server object if found, None otherwise
         """
-        with open(file_path, 'r') as file:
-            server_ip, server_port = file.readline().strip().split(':')
-            server_name = file.readline().strip()
-            server_id = file.readline().strip()
-            symmetric_key = file.readline().strip()
-        return cls(server_ip, int(server_port), server_name, server_id, symmetric_key)
+        for server in server_list:
+            if server.server_id == server_id:
+                return server
+        return None
 
     def __eq__(self, other) -> bool:
         """
