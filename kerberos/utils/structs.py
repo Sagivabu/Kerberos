@@ -2,9 +2,10 @@ import struct
 import datetime
 import hashlib
 from typing import Optional, List
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import unpad, pad
-from datetime import datetime, timezone
+from datetime import datetime, timedelta
+
+import utils.encryption as Enc
+from utils.utils import datetime_to_bytes
 
 class ResponseStructure:
     def __init__(self, version: str, code: str, payload: Optional[str]) -> None:
@@ -334,6 +335,14 @@ class Lastseen:
 #part of Response 1603 - sending to the client an encrypted symmetric key between the server and the client.
 class EncryptedKey:
     def __init__(self, encrypted_key_iv: bytes, encrypted_nonce: bytes, encrypted_server_key: bytes):
+        """
+        Encrypted key structure for the client to decrypt to connect the server
+
+        Args:
+            encrypted_key_iv (bytes): The IV that used to encrypt the 'nonce' and the 'server_key' (The IV itself not encrypted)
+            encrypted_nonce (bytes): The client's nonce encrypted with this IV and client's password_hash
+            encrypted_server_key (bytes): The AES_key (symmetric key) to connect the client<->server (encrypted the same as above)
+        """
         self.encrypted_key_iv = encrypted_key_iv
         self.encrypted_nonce = encrypted_nonce
         self.encrypted_server_key = encrypted_server_key
@@ -357,6 +366,43 @@ class EncryptedKey:
 
         encrypted_key_iv, encrypted_nonce, encrypted_server_key = struct.unpack('<16s8s32s', data)
         return cls(encrypted_key_iv, encrypted_nonce, encrypted_server_key)
+    
+    @classmethod
+    def create(cls, client_obj: Client, nonce: str, aes_key: bytes) -> 'EncryptedKey':
+        """
+        Create EncryptedKey object for the client to decipher 
+
+        Args:
+            client_obj (Client): the targeted client
+            nonce (str): his own nonce (for varification)
+            aes_key (bytes): the symmetric key to connect the server 
+
+        Raises:
+            e: General failure
+
+        Returns:
+            EncryptedKey: New object includes encrypted_nonce, encrypted_aes_key, the IV used for the ecnryption
+        """
+        try:
+            # Step 1: Derive client key based on the client's password_hash
+            client_key = Enc.derive_encryption_key(client_obj.password_hash)
+            
+            # Step 2: Generate random IV for the encryption of the nonce and AES_key
+            encryption_key_iv = Enc.generate_random_iv() 
+            
+            # Step 3: Encrypt the nonce
+            encrypted_nonce = Enc.encrypt_with_aes_cbc(client_key, encryption_key_iv, nonce.encode()) 
+            
+            # Step 4: Encrypt the AES_key
+            encrypted_aes_key = Enc.encrypt_with_aes_cbc(client_key, encryption_key_iv, aes_key) 
+            
+            # Step 5: Create the object and return
+            return cls(encrypted_key_iv=encryption_key_iv,
+                            encrypted_nonce=encrypted_nonce,
+                            encrypted_server_key=encrypted_aes_key)
+        except Exception as e:
+            print(f"Failed to create 'EncryptedKey' object with given client object and nonce")
+            raise e
 
 #part of Response 1603 - sending to the client an encrypted ticket to pass to server.
 class Ticket:
@@ -398,6 +444,39 @@ class Ticket:
         
         # Create a new Ticket object with the unpacked data
         return cls(server_version, client_id, server_id, creation_time, ticket_iv, encrypted_aes_key, encrypted_expiration_time)
+    
+    @classmethod
+    def create(cls, server_obj: Server, client_id: str, expiration_time_delta: timedelta, aes_key: bytes, server_verion: int) -> 'Ticket':
+        # Step 1: Derive msg server key based on the server's symmetric key
+        msg_server_key = Enc.derive_encryption_key(server_obj.symmetric_key.encode()) 
+        
+        # Step 2: Generate random IV for the encryption of the Expiration_time and AES_key
+        ticket_iv = Enc.generate_random_iv()
+        
+        # Step 3: Define creation_time
+        creation_time = datetime.now()
+        
+        # Step 4: Create the expiration time based on the creation time and the Auth_server deltas
+        expiration_time = creation_time + expiration_time_delta
+        
+        # Step 5: Convert the time objects to 8 bytes as required
+        creation_time_8_bytes = datetime_to_bytes(creation_time)
+        expiration_time_8_bytes = datetime_to_bytes(expiration_time)
+        
+        # Step 6: Encrypt the AES key
+        server_encrypted_aes_key = Enc.encrypt_with_aes_cbc(msg_server_key, ticket_iv, aes_key)
+        
+        # Step 7: Encrypt the Expiration_time
+        encrypted_expiration_time = Enc.encrypt_with_aes_cbc(msg_server_key, ticket_iv, expiration_time_8_bytes)
+        
+        # Step 8: Create the object and return
+        return cls(server_version=server_verion, #NOTE: XXX: Not sure which version (Auth_server / msg_server)
+                        client_id=client_id,
+                        server_id=server_obj.server_id,
+                        creation_time = creation_time_8_bytes,
+                        ticket_iv= ticket_iv,
+                        encrypted_aes_key=server_encrypted_aes_key,
+                        encrypted_expiration_time=encrypted_expiration_time)
       
 class SymmetricKeyResponse:
     def __init__(self, client_id: bytes, encrypted_key: EncryptedKey, ticket: Ticket):

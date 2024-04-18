@@ -1,8 +1,8 @@
 import os
+import hashlib
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
 from Crypto.Util.Padding import pad
-import hashlib
 
 def derive_encryption_key(based_on: bytes) -> bytes:
     """

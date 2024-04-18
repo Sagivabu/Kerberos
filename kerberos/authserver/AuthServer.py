@@ -69,7 +69,7 @@ class AuthServer:
                         client_name, client_password = request_obj.extract_name_password()
                     except Exception as e: #if 
                         print(f"Failed to extract name and password from given payload.\t{e}")
-                        response = ResponseStructure(request_obj.version, ResponseEnums.REGISTRATION_FAILED.value, payload=None).pack() #prepare response as bytes
+                        response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_FAILED.value, payload=None).pack() #prepare response as bytes
                         connection.sendall(response)
                     else:
                         if not self.__is_client_exist_by_name(client_name): #if client not exists in list
@@ -82,16 +82,16 @@ class AuthServer:
                                 self.add_new_client_to_file(new_client)
 
                                 #send success response
-                                response = ResponseStructure(request_obj.version, ResponseEnums.REGISTRATION_SUCCESS.value, new_uuid).pack() #prepare response as bytes
+                                response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_SUCCESS.value, new_uuid).pack() #prepare response as bytes
                                 connection.sendall(response)
                                 
                             except Exception as e:
                                 print(f"Failed to register new client with name: '{client_name}', password: '{client_password}'.\n{e}")
-                                response = ResponseStructure(request_obj.version, ResponseEnums.REGISTRATION_FAILED.value, None).pack() #prepare response as bytes
+                                response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_FAILED.value, None).pack() #prepare response as bytes
                                 connection.sendall(response)
                         else:
                             print(f"Failed to register new client, name '{client_name}' already exists in DB.")
-                            response = ResponseStructure(request_obj.version, ResponseEnums.REGISTRATION_FAILED.value, None).pack() #prepare response as bytes
+                            response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_FAILED.value, None).pack() #prepare response as bytes
                             connection.sendall(response)
                     
                 case RequestEnums.SERVER_REGISTRATION: # Server Registration (NOTE: BONUS)
@@ -100,7 +100,7 @@ class AuthServer:
                 case RequestEnums.SERVER_LIST: # Server List (NOTE: BONUS)
                     pass
 
-                case RequestEnums.SYMMETRY_KEY: # Symmetric key to connect a server
+                case RequestEnums.SYMMETRIC_KEY: # Symmetric key to connect a server
                     print("Received Symmetric key to a server request:")
                     print("Payload:", request_obj.payload)
 
@@ -108,7 +108,7 @@ class AuthServer:
                         server_id, nonce = request_obj.extract_server_id_nonce()
                     except Exception as e: #if 
                         print(f"Failed to extract server_id and nonce from given payload.\t{e}")
-                        response = ResponseStructure(request_obj.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
+                        response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
                         connection.sendall(response)
                     else:
 
@@ -123,49 +123,36 @@ class AuthServer:
                         # If server not found return error
                         if not the_server:
                             print(f"Failed to find required server in DB following given server_id: '{server_id}'. Server may not be exist.")
-                            response = ResponseStructure(request_obj.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
+                            response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
                             connection.sendall(response)
                         
                         # If Client not found return error (Can happen only in case the client is not registered in DB)
                         elif not the_client:
                             print(f"Failed to find the client information in DB following client_id from request header: '{request_obj.client_id}'. Client may not be registered.")
-                            response = ResponseStructure(request_obj.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
+                            response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
                             connection.sendall(response)
                         
                         else:
                             # Prepare the response with the server's information
-                            AES_key = generate_aes_key() # Generate AES_key for the server-client communication
-
-                            #--1-- Prepare the EncryptedKey object
-                            client_key = derive_encryption_key(the_client.password_hash) # Step 1: Derive client key based on the client's password_hash
-                            encrypted_key_iv = generate_random_iv() # Step 2: Generate random IV for the encryption of the nonce and AES_key
-                            encrypted_nonce = encrypt_with_aes_cbc(client_key, encrypted_key_iv, nonce.encode()) # Step 3: Encrypt the nonce
-                            encrypted_aes_key = encrypt_with_aes_cbc(client_key, encrypted_key_iv, AES_key) # Step 4: Encrypt the AES_key
-                            encrypted_key = EncryptedKey(encrypted_key_iv=encrypted_key_iv,
-                                         encrypted_nonce=encrypted_nonce,
-                                         encrypted_server_key=encrypted_aes_key)
-
-                            #--2-- Prepare the Ticket object
-                            msg_server_key = derive_encryption_key(the_server.symmetric_key.encode()) # Step 1: Derive msg server key based on the server's symmetric key
-                            ticket_iv = generate_random_iv() # Step 2: Generate random IV for the encryption of the Expiration_time and AES_key
-                            creation_time = datetime.now() # Step 3: Define creation_time
-                            expiration_time = creation_time + self.ticket_expiration_time # Step 4: Create the expiration time based on the creation time and the Auth_server deltas
-                            creation_time_8_bytes = datetime_to_bytes(creation_time)
-                            expiration_time_8_bytes = datetime_to_bytes(expiration_time)
-                            server_encrypted_aes_key = encrypt_with_aes_cbc(msg_server_key, ticket_iv, AES_key) # Step 5: Encrypt the AES key
-                            encrypted_expiration_time = encrypt_with_aes_cbc(msg_server_key, ticket_iv, expiration_time_8_bytes) # Step 6: Encrypt the Expiration_time
-                            ticket = Ticket(server_version=self.version, #NOTE: XXX: Not sure which version (Auth_server / msg_server)
-                                            client_id=the_client.id,
-                                            server_id=the_server.server_id,
-                                            creation_time = creation_time
-                                            ticket_iv= ticket_iv,
-                                            aes_key=) #TODO: STOPPED HERE BECAUSE SEGGEV IS YELLING AT ME!
+                            
+                            #--1-- Generate AES_key for the server-client communication
+                            AES_key = generate_aes_key() 
+                            
+                            #--2-- Create 'EncryptedKey' object and 'Ticket' object as part of the response
+                            encrypted_key = EncryptedKey.create(the_client, nonce, AES_key) # Create the EncryptedKey object for the client to decipher
+                            ticket = Ticket.create(the_server, the_client.id, self.ticket_expiration_time, AES_key, self.version) #NOTE: XXX: Not sure which version (Auth_server / msg_server)
+                            
                             #--3-- Prepare the SymmetricKeyResponse object
-
+                            SKR_response = SymmetricKeyResponse(client_id=the_client.id, encrypted_key=encrypted_key, ticket=ticket)
+                            
+                            #--4-- Send response
+                            response = ResponseStructure(self.version, ResponseEnums.SYMMETRIC_KEY.value, payload=SKR_response).pack() #prepare response as bytes
+                            connection.sendall(response)
                     
                 case _:
-                    print("Unknown request code")
-                    # TODO: return response of Unkown request
+                    print(f"Unfamiliar request code: '{request_obj.code}'")
+                    response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack()
+                    connection.sendall(response)
         finally:
             # Clean up the connection
             connection.close()

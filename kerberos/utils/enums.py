@@ -5,7 +5,7 @@ class RequestEnums(Enum): #client -> server
     CLIENT_REGISTRATION = '1024' #client registration
     SERVER_REGISTRATION = '1025' #server registration (NOTE: BONUS)
     SERVER_LIST = '1026' #list of all server (NOTE: BONUS)
-    SYMMETRY_KEY = '1027' #symmetry key
+    SYMMETRIC_KEY = '1027' #symmetric key
     
     #MSG server
     DELIVER_SYMMETRY_KEY = '1028' #deliver symmetry key to server
