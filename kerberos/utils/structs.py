@@ -138,6 +138,36 @@ class RequestStructure:
 
         return server_id, nonce
     
+    def extract_server_name_symmetric_key(payload: str) -> tuple[str, str]:
+        """
+        Extract server name and symmetric key from payload.
+
+        Args:
+            payload (str): Payload string containing server name and symmetric key.
+
+        Returns:
+            tuple[str, str]: Tuple containing server name and symmetric key.
+        """
+        if not payload:
+            raise ValueError("Payload is None")
+        
+        # Split payload by null terminator to separate server name and symmetric key
+        parts = payload.split('\x00')
+
+        # Validate the number of parts
+        if len(parts) != 2:
+            raise ValueError("Payload does not contain exactly two parameters")
+
+        # Extract server name and symmetric key
+        server_name = parts[0]
+        symmetric_key = parts[1]
+
+        # Validate the length of the symmetric key
+        if len(symmetric_key) != 32:
+            raise ValueError("Symmetric key must be exactly 32 bytes")
+
+        return server_name, symmetric_key
+    
 class Client:
     def __init__(self, id: str, name: str, password_hash: bytes, datetime_obj: datetime) -> None:
         """

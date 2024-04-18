@@ -3,7 +3,7 @@ import threading
 import uuid
 from datetime import datetime, timedelta
 from utils.enums import RequestEnums, ResponseEnums
-from utils.utils import read_port, update_txt_file, read_txt_file, datetime_to_bytes
+from utils.utils import read_port, update_txt_file, read_txt_file, datetime_to_bytes, is_valid_port
 from utils.structs import RequestStructure, ResponseStructure ,Client, Server, EncryptedKey, Ticket, SymmetricKeyResponse
 from utils.encryption import encrypt_with_aes_cbc, derive_encryption_key, generate_random_iv, generate_aes_key
 
@@ -79,7 +79,7 @@ class AuthServer:
                                 new_client = Client.from_plain_password(new_uuid, client_name, client_password, datetime.now())
                                 
                                 #add it to clients.txt file
-                                self.add_new_client_to_file(new_client)
+                                self.__add_new_client_to_file(new_client)
 
                                 #send success response
                                 response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_SUCCESS.value, new_uuid).pack() #prepare response as bytes
@@ -95,10 +95,58 @@ class AuthServer:
                             connection.sendall(response)
                     
                 case RequestEnums.SERVER_REGISTRATION: # Server Registration (NOTE: BONUS)
-                    pass
+                    print("Received server registration request:")
+                    print("Payload:", request_obj.payload)
+                    
+                    try:
+                        server_name, server_symmetric_key = request_obj.extract_server_name_symmetric_key()
+                    except Exception as e: #if 
+                        print(f"Failed to extract name and symmetric key from given payload.\t{e}")
+                        response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_FAILED.value, payload=None).pack() #prepare response as bytes
+                        connection.sendall(response)
+                    else:
+                        if not self.__is_server_exist_by_name(server_name): #if server does not exists in list
+                            try:
+                                # Create new 'Server' object
+                                new_uuid = str(uuid.uuid4()) #create uuid
+                                client_ip, client_port = client_address #get the server IP and PORT
+                                new_server = Server(server_ip=client_ip,
+                                                    server_port=client_port,
+                                                    server_name=server_name,
+                                                    server_id=new_uuid,
+                                                    symmetric_key=server_symmetric_key)
+                                
+                                if self.__is_ip_port_in_use(client_ip, client_port): #NOTE: XXX: Can remove this if you dont want this validation
+                                    raise ValueError(f"Server with IP address {client_ip} and port {client_port} is already in use.")
+                                
+                                #add it to msg.info.txt file
+                                self.__add_server_to_file(new_server)
+
+                                #send success response
+                                response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_SUCCESS.value, new_uuid).pack() #prepare response as bytes
+                                connection.sendall(response)
+                                
+                            except Exception as e:
+                                print(f"Failed to register new server with name: '{server_name}', symmetric_key: '{server_symmetric_key}'.\n{e}")
+                                response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_FAILED.value, None).pack() #prepare response as bytes
+                                connection.sendall(response)
+                        else:
+                            print(f"Failed to register new server, name '{server_name}' already exists in DB.")
+                            response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_FAILED.value, None).pack() #prepare response as bytes
+                            connection.sendall(response)
 
                 case RequestEnums.SERVER_LIST: # Server List (NOTE: BONUS)
-                    pass
+                    print("Received servers list request:")     
+                    try:
+                        server_list = self.__read_server_file()
+                        response_string = self.__format_servers_list(server_list)
+                    except Exception as e: #if 
+                        print(f"Failed to get list of servers.\t{e}")
+                        response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
+                        connection.sendall(response)
+                    else:
+                        response = ResponseStructure(self.version, ResponseEnums.SERVER_LIST.value, payload=response_string).pack() #prepare response as bytes
+                        connection.sendall(response)
 
                 case RequestEnums.SYMMETRIC_KEY: # Symmetric key to connect a server
                     print("Received Symmetric key to a server request:")
@@ -158,7 +206,7 @@ class AuthServer:
             connection.close()
      
     # ------- Client handle Functions -------
-    def add_new_client_to_file(self, client_obj: Client) -> None:
+    def __add_new_client_to_file(self, client_obj: Client) -> None:
         """
         Update the clients.txt file with new client info (new row)
 
@@ -209,10 +257,10 @@ class AuthServer:
 
     def __read_clients_file(self) -> list[Client]:
         """
-        Private function to read clients file and deliver the object to other functions (find client, remove, update...)
+        Private function to read clients file and return list of clients from file
 
         Returns:
-            list[Client]: list of Client objects
+            list[Client]: list of Client objects that were extracted from file
         """
         with self.client_file_lock: #read file with lock premit
             content = read_txt_file(self.clients_file)
@@ -227,29 +275,10 @@ class AuthServer:
                 client = Client(id, name, password_hash, date_time)
                 client_list.append(client)
         return client_list
-    
-    def __read_server_file(self) -> list[Server]:
-        servers = []
-        # Acquire the lock before reading from the file
-        with self.server_file_lock:
-            with open(self.msg_file, 'r') as file:
-                lines = file.readlines()
-        # Release the lock as soon as the file reading is done
-        # Now we have the data and can process it without holding the lock
-        num_lines = len(lines)
-        for i in range(0, num_lines, 4):
-            ip_port = lines[i].strip().split(':')
-            server_ip = ip_port[0]
-            server_port = int(ip_port[1])
-            server_name = lines[i + 1].strip()
-            server_id = lines[i + 2].strip()
-            symmetric_key = lines[i + 3].strip()
-            servers.append(Server(server_ip, server_port, server_name, server_id, symmetric_key))
-        return servers
 
-    def __is_client_exist(self, client_obj: Client) -> bool:
+    def __is_client_exist(self, client_obj: Client) -> bool: #NOTE: It was requested in the project to find if only same name exists
         """
-        Return True if client_obj exists in client.txt based on client_name ONLY
+        Return True if client_obj exists in client.txt
 
         Args:
             client_obj (Client): Client object
@@ -259,7 +288,7 @@ class AuthServer:
         """
         client_list = self.__read_clients_file()
         for client in client_list:
-            if client.name == client_obj.name: #NOTE: It was requested in the project to find if only same name exists
+            if client == client_obj: 
                 return True
         return False
     
@@ -278,6 +307,123 @@ class AuthServer:
             if client.name == client_name:
                 return True
         return False
+
+    # ------- Server handle Functions -------
+    def __add_server_to_file(self, server: Server) -> None:
+        """
+        Update the msg.info.txt file with new server info (new 4 rows)
+
+        Args:
+            server (Server): info about the server
+        """
+        try:
+            # Convert Server object to string format
+            server_string = f"{server.server_ip}:{server.server_port}\n{server.server_name}\n{server.server_id}\n{server.symmetric_key}\n"
+            server_string = f"{server.server_ip}:{server.server_port}\n{server.server_name}\n{server.server_id}\n{server.symmetric_key}\n"
+            
+            # Update the text file with the server details
+            update_txt_file(self.msg_file, server_string)
+        except Exception as e:
+            print(f"Failed to add server to txt file: '{self.msg_file}', with the next server details: '{server}'")
+            raise
+        
+    def __read_server_file(self) -> list[Server]:
+        """
+        Private function to read servers file (msg.info.txt) and return list of Servers from file
+
+        Returns:
+            list[Server]: list of Server objects that were extracted from file
+        """
+        servers = []
+        # Acquire the lock before reading from the file
+        with self.server_file_lock:
+            with open(self.msg_file, 'r') as file:
+                lines = file.readlines()
+        # Release the lock as soon as the file reading is done
+        # Now we have the data and can process it without holding the lock
+        num_lines = len(lines)
+        for i in range(0, num_lines, 4):
+            ip_port = lines[i].strip().split(':')
+            server_ip = ip_port[0]
+            server_port = int(ip_port[1])
+            server_name = lines[i + 1].strip()
+            server_id = lines[i + 2].strip()
+            symmetric_key = lines[i + 3].strip()
+            servers.append(Server(server_ip, server_port, server_name, server_id, symmetric_key))
+        return servers
+
+    def __is_server_exist(self, server_obj: Server) -> bool: #NOTE: It was requested in the project to find if only same name exists
+        """
+        Return True if server_obj exists in msg.info.txt
+
+        Args:
+            server_obj (Server): Server object
+
+        Returns:
+            bool: True if exists, False otherwise
+        """
+        server_list = self.__read_server_file()
+        for server in server_list:
+            if server == server_obj: 
+                return True
+        return False
+
+    def __is_server_exist_by_name(self, server_name: str) -> bool:
+        """
+        Return True if server_name exists in msg.info.txt
+
+        Args:
+            server_name (str): Server's name
+
+        Returns:
+            bool: True if exists, False otherwise
+        """
+        server_list = self.__read_server_file()
+        for server in server_list:
+            if server.server_name == server_name:
+                return True
+        return False
+
+    def __is_ip_port_in_use(self, ip: str, port: int) -> bool:
+        """
+        Check if the given IP address and port are already in use by any server.
+
+        Args:
+            ip (str): The IP address to check.
+            port (int): The port number to check.
+
+        Returns:
+            bool: True if the IP address and port are already in use, False otherwise.
+        """
+        if not is_valid_port(port):
+            raise ValueError(f"The port number '{port}' is not valid. Please provide a valid port number between 0 and 65535.")
+        
+        # Get the list of servers
+        servers = self.__read_server_file()
+        
+        # Iterate over the servers and check if any of them use the given IP address and port
+        for server in servers:
+            if server.server_ip == ip and server.server_port == port:
+                return True  # IP address and port are in use by this server
+        
+        return False  # IP address and port are not in use by any server
+    
+    def __format_servers_list(servers: list[Server]):
+        """
+        Format the list of servers into a string.
+
+        Args:
+            servers (list[Server]): List of Server objects.
+
+        Returns:
+            str: Formatted string representing the servers list.
+        """
+        formatted_string = "Servers list:\n"
+        for i, server in enumerate(servers):
+            server_info = f"{server.server_name} - {server.server_ip}:{server.server_port} - {server.server_id}"
+            formatted_string += f"server[{i}].{server_info}\n"
+        return formatted_string
+
 
     # ------- GETS -------
     @property
