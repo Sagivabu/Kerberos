@@ -79,3 +79,30 @@ def datetime_to_bytes(dt: datetime) -> bytes:
     
     # Convert the timestamp to bytes (using little endian byte order)
     return timestamp.to_bytes(8, byteorder='little')
+
+def build_reg_payload(name: str, password: str) -> str:
+    """
+    Build the payload for registration process with given name and password (add null terminated chars to both)
+
+    Args:
+        name (str): client's username
+        password (str): client's password
+
+    Returns:
+        str: payload of both chained
+    """
+    # Validate the length of name and password
+    if len(name) > 255:
+        print("Error: Name exceeds maximum length of 255 characters.")
+        return None
+    if len(password) > 255:
+        print("Error: Password exceeds maximum length of 255 characters.")
+        return None
+    
+    # Add null-terminated characters at the end of name and password
+    name += "\0"
+    password += "\0"
+    
+    # Concatenate name and password with null-terminated characters
+    payload = name + password
+    return payload

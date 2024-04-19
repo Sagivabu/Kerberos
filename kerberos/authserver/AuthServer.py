@@ -1,11 +1,12 @@
 import socket
 import threading
 import uuid
+import struct
 from datetime import datetime, timedelta
 from utils.enums import RequestEnums, ResponseEnums
-from utils.utils import read_port, update_txt_file, read_txt_file, datetime_to_bytes, is_valid_port
+from utils.utils import read_port, update_txt_file, read_txt_file, is_valid_port
 from utils.structs import RequestStructure, ResponseStructure ,Client, Server, EncryptedKey, Ticket, SymmetricKeyResponse
-from utils.encryption import encrypt_with_aes_cbc, derive_encryption_key, generate_random_iv, generate_aes_key
+from utils.encryption import generate_aes_key
 
 
 PORT_FILE_PATH = "C:/git/Kerberos/AuthServer/port.info.txt"
@@ -33,16 +34,22 @@ class AuthServer:
         self.__client_file_lock = threading.Lock() # Define a lock to manage the threads that attend to clients.txt file. NOTE: the lock is per instance of the class!
         self.__msg_file_lock = threading.Lock() # Define a lock to manage the threads that attend to msg.info.txt file
        
-    def __receive_all(self, connection: socket.socket, size: int):
-        """
-        Helper function to receive all data from a socket connection.
-        """
+    def __receive_all(self, connection: socket.socket, header_size: int):
+        """ Helper function to receive all data from a socket connection matching the format of 'RequestStructure'. """
         data = b''
-        while len(data) < size:
-            chunk = connection.recv(size - len(data))
+        while len(data) < header_size:
+            chunk = connection.recv(header_size - len(data))
             if not chunk:
-                raise RuntimeError("Incomplete data received.")
+                raise RuntimeError("Incomplete header data received.")
             data += chunk
+        
+        # Parse header to determine payload size
+        client_id, version, code, payload_size = struct.unpack('<16s1s2sI', data)
+        payload_size = int(payload_size)
+        
+        # Receive the payload
+        data += self.__receive_all(connection, payload_size)
+
         return data
 
     def __handle_client(self, connection: socket.socket, client_address: tuple[str, int]):
@@ -53,7 +60,7 @@ class AuthServer:
 
         try:
             # Receive the message
-            data = self.__receive_all(connection, 23)  # Assuming header size is fixed at 23 bytes
+            data = self.__receive_all(connection, header_size=23)  # Assuming 'RequestStructure' header size is fixed at 23 bytes
 
             # Unpack the received data into a RequestStructure object
             request_obj = RequestStructure.unpack(data)
@@ -464,10 +471,6 @@ class AuthServer:
     
     def set_ticket_expiration_time(self, timedelta_obj: timedelta) -> None:
         self.__ticket_expiration_time = timedelta_obj
-
-    
-
-
 
     # ------- RUN SERVER ------- 
     def run_auth_server(self):
