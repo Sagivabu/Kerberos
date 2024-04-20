@@ -5,7 +5,7 @@ import struct
 from datetime import datetime, timedelta
 from utils.enums import RequestEnums, ResponseEnums
 from utils.utils import read_port, update_txt_file, read_txt_file, is_valid_port
-from utils.structs import RequestStructure, ResponseStructure ,Client, Server, EncryptedKey, Ticket, SymmetricKeyResponse
+from utils.structs import RequestStructure, ResponseStructure ,Client, Server, EncryptedKey, Ticket, SymmetricKeyResponse, RESPONSE_HEADER_SIZE, REQUEST_HEADER_SIZE
 from utils.encryption import generate_aes_key
 
 
@@ -34,8 +34,17 @@ class AuthServer:
         self.__client_file_lock = threading.Lock() # Define a lock to manage the threads that attend to clients.txt file. NOTE: the lock is per instance of the class!
         self.__msg_file_lock = threading.Lock() # Define a lock to manage the threads that attend to msg.info.txt file
        
-    def __receive_all(self, connection: socket.socket, header_size: int):
-        """ Helper function to receive all data from a socket connection matching the format of 'RequestStructure'. """
+    def __receive_all(self, connection: socket.socket, header_size: int) -> bytes:
+        """
+        Helper function to receive all data from a socket connection matching the format of 'RequestStructure'.
+
+        Args:
+            connection (socket.socket): opened connection
+            header_size (int): header size
+
+        Returns:
+            bytes: The complete data from the connection
+        """
         data = b''
         while len(data) < header_size:
             chunk = connection.recv(header_size - len(data))
@@ -60,7 +69,7 @@ class AuthServer:
 
         try:
             # Receive the message
-            data = self.__receive_all(connection, header_size=23)  # Assuming 'RequestStructure' header size is fixed at 23 bytes
+            data = self.__receive_all(connection, header_size=REQUEST_HEADER_SIZE)  # Assuming 'RequestStructure' header size is fixed at 23 bytes
 
             # Unpack the received data into a RequestStructure object
             request_obj = RequestStructure.unpack(data)
@@ -98,7 +107,7 @@ class AuthServer:
                                 connection.sendall(response)
                         else:
                             print(f"Failed to register new client, name '{client_name}' already exists in DB.")
-                            response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_FAILED.value, None).pack() #prepare response as bytes
+                            response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_USER_EXISTS.value, None).pack() #prepare response as bytes
                             connection.sendall(response)
                     
                 case RequestEnums.SERVER_REGISTRATION: # Server Registration (NOTE: BONUS)
@@ -145,20 +154,36 @@ class AuthServer:
                 case RequestEnums.SERVER_LIST: # Server List (NOTE: BONUS)
                     print("Received servers list request:")     
                     try:
+                        #check if client registered
+                        if not self.__is_client_exist_by_id(request_obj.client_id):
+                            print(f"ERROR: Client is not registered in DB, request rejected.")
+                            response = ResponseStructure(self.version, ResponseEnums.SERVER_REJECT_REQUEST.value, payload=None).pack() #prepare response as bytes
+                            connection.sendall(response)
+                            
+                        #get list of servers
                         server_list = self.__read_server_file()
                         response_string = self.__format_servers_list(server_list)
+                        response = ResponseStructure(self.version, ResponseEnums.SERVER_LIST.value, payload=response_string).pack() #prepare response as bytes
+                        connection.sendall(response)
                     except Exception as e: #if 
                         print(f"Failed to get list of servers.\t{e}")
                         response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
-                        connection.sendall(response)
-                    else:
-                        response = ResponseStructure(self.version, ResponseEnums.SERVER_LIST.value, payload=response_string).pack() #prepare response as bytes
                         connection.sendall(response)
 
                 case RequestEnums.SYMMETRIC_KEY: # Symmetric key to connect a server
                     print("Received Symmetric key to a server request:")
                     print("Payload:", request_obj.payload)
-
+                    
+                    try:
+                        #check if client registered
+                        if not self.__is_client_exist_by_id(request_obj.client_id):
+                            print(f"ERROR: Client is not registered in DB, request rejected.")
+                            response = ResponseStructure(self.version, ResponseEnums.SERVER_REJECT_REQUEST.value, payload=None).pack() #prepare response as bytes
+                            connection.sendall(response)
+                    except:
+                        print(f"Failed to identify the client by his ID")
+                        response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
+                        connection.sendall(response)
                     try: #get request's payload
                         server_id, nonce = request_obj.extract_server_id_nonce()
                     except Exception as e: #if 
@@ -315,6 +340,22 @@ class AuthServer:
                 return True
         return False
 
+    def __is_client_exist_by_id(self, client_id: str) -> bool:
+        """
+        Return True if client_id exists in client.txt
+
+        Args:
+            client_id (str): Client's id
+
+        Returns:
+            bool: True if exists, False otherwise
+        """
+        client_list = self.__read_clients_file()
+        for client in client_list:
+            if client.id == client_id:
+                return True
+        return False
+    
     # ------- Server handle Functions -------
     def __add_server_to_file(self, server: Server) -> None:
         """
@@ -428,7 +469,7 @@ class AuthServer:
         formatted_string = "Servers list:\n"
         for i, server in enumerate(servers):
             server_info = f"{server.server_name} - {server.server_ip}:{server.server_port} - {server.server_id}"
-            formatted_string += f"server[{i}].{server_info}\n"
+            formatted_string += f"server[{i}] - {server_info}\n"
         return formatted_string
 
 

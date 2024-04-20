@@ -31,12 +31,12 @@ def decrypt_with_aes_cbc(key: bytes, iv: bytes, ciphertext: bytes) -> bytes:
     plaintext = unpad(cipher.decrypt(ciphertext), AES.block_size)
     return plaintext
 
-def client_decrypt_encrypted_key(encrypted_key_iv: bytes, encrypted_nonce: bytes, encrypted_server_key: bytes, password_hash: bytes, salt: bytes) -> tuple:
+def client_decrypt_encrypted_key(encrypted_key_iv: bytes, encrypted_nonce: bytes, encrypted_server_key: bytes, password: str, salt: bytes) -> tuple[bytes,bytes]:
     """
     Function that helps the client to decrypt 'EncryptedKey' object, which consist 'encrypted_nonce' and 'encrypted_server_key' (AES_key)
 
     Args:
-        encrypted_key_iv (bytes): consist the IV to decrypt the 'Nonce' and 'AES_key', this IV is encrypted with the 'client_key'
+        encrypted_key_iv (bytes): consist the IV to decrypt the 'Nonce' and 'AES_key', this IV is not encrypted
         encrypted_nonce (bytes): 'Nonce' to verify the response from Auth_server
         encrypted_server_key (bytes): AES_key is a shared key between the client and server 
         password_hash (bytes): Client's password_hash to create the 'client_key'
@@ -45,14 +45,17 @@ def client_decrypt_encrypted_key(encrypted_key_iv: bytes, encrypted_nonce: bytes
     Returns:
         tuple (bytes, bytes): (decrypted_nonce, decrypted_server_key)
     """
+    #create password_hash
+    password_hash = hashlib.sha256(password.encode()).digest()
+    
     # Derive client key from password hash
     client_key = derive_client_key(password_hash, salt)
     
     # Decrypt the Encrypted Key IV
-    decrypted_key_iv = decrypt_with_aes_cbc(client_key, encrypted_key_iv[:16], encrypted_key_iv[16:])
+    #decrypted_key_iv = decrypt_with_aes_cbc(client_key, encrypted_key_iv[:16], encrypted_key_iv[16:]) #NOTE: uncomment this if using encrypted IV
     
     # Decrypt the Encrypted Nonce and AES Key using the decrypted IV and client key
-    decrypted_nonce = decrypt_with_aes_cbc(client_key, decrypted_key_iv, encrypted_nonce)
-    decrypted_server_key = decrypt_with_aes_cbc(client_key, decrypted_key_iv, encrypted_server_key)
+    decrypted_nonce = decrypt_with_aes_cbc(client_key, encrypted_key_iv, encrypted_nonce) #NOTE: use decrypted_key_iv if the IV is encrypted too
+    decrypted_server_key = decrypt_with_aes_cbc(client_key, encrypted_key_iv, encrypted_server_key)
     
     return decrypted_nonce, decrypted_server_key

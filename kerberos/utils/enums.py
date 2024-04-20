@@ -22,13 +22,16 @@ class ResponseEnums(Enum): #server -> client
     #Auth server
     REGISTRATION_SUCCESS = '1600' #client registration
     REGISTRATION_FAILED = '1601' #server registration
+    REGISTRATION_USER_EXISTS = '1611' #users already exists in DB
     SERVER_LIST = '1602' #list of all server
     SYMMETRIC_KEY = '1603' #symmetry key
+    SERVER_REJECT_REQUEST = '1610' # The server intentionally rejected the request
     
     #MSG server
     SERVER_MESSAGE_ACCEPT_SYMMETRIC_KEY = '1604' #server accept the given symmetric key
     SERVER_MESSAGE_RECIEVED_MSG_SUCCESSFULLY = '1605' #server approve that message reached its destination
-    SERVER_GENERAL_ERROR = '1609' #general error occured at the msg server
+    SERVER_GENERAL_ERROR = '1609' # general error occured at the msg server
+
 
     @classmethod
     def find(cls, code: str):

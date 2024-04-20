@@ -1,6 +1,7 @@
 
 
 from datetime import datetime
+import secrets
 
 
 MIN_PORT_VALUE = 0
@@ -106,3 +107,7 @@ def build_reg_payload(name: str, password: str) -> str:
     # Concatenate name and password with null-terminated characters
     payload = name + password
     return payload
+
+def generate_nonce() -> bytes:
+    """Generate a random 8-byte nonce."""
+    return secrets.token_bytes(8)

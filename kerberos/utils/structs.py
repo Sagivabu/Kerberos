@@ -7,6 +7,9 @@ from datetime import datetime, timedelta
 import utils.encryption as Enc
 from utils.utils import datetime_to_bytes
 
+RESPONSE_HEADER_SIZE = 7
+REQUEST_HEADER_SIZE = 23
+
 class ResponseStructure:
     def __init__(self, version: str, code: str, payload: Optional[str]) -> None:
         self.version = version[:1]  # Limit to 1 byte
@@ -53,8 +56,7 @@ class RequestStructure:
         self.code = code[:2]  # Limit to 2 bytes
         self.payload_size = len(payload.encode('utf-8')) if payload else 0 # len() return int (= 4 bytes)
         self.payload = payload
-        
-    
+         
     # ---------- PACK / UNPACK ----------
     def pack(self) -> bytes:
         ''' object method to pack the object'''
@@ -80,7 +82,6 @@ class RequestStructure:
         header = struct.unpack(format_string, data[:size_of_header])
         payload = data[size_of_header:]
         return cls(header[0].decode('utf-8'), header[1].decode('utf-8'), header[2].decode('utf-8'), payload.decode('utf-8'))
-    
     
     # ---------- functions related to Specific Codes ----------
     def extract_name_password(self) -> tuple[str, str]: # Code 1024 (Registration)
