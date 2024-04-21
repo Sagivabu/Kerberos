@@ -3,10 +3,10 @@ import threading
 import uuid
 import struct
 from datetime import datetime, timedelta
-from utils.enums import RequestEnums, ResponseEnums
-from utils.utils import read_port, update_txt_file, read_txt_file, is_valid_port
-from utils.structs import RequestStructure, ResponseStructure ,Client, Server, EncryptedKey, Ticket, SymmetricKeyResponse, RESPONSE_HEADER_SIZE, REQUEST_HEADER_SIZE
-from utils.encryption import generate_aes_key
+from kerberos.utils.enums import RequestEnums, ResponseEnums
+from kerberos.utils.utils import read_port, update_txt_file, read_txt_file, is_valid_port
+from kerberos.utils.structs import RequestStructure, ResponseStructure ,Client, Server, EncryptedKey, Ticket, SymmetricKeyResponse, RESPONSE_HEADER_SIZE, REQUEST_HEADER_SIZE, ServerInList
+from kerberos.utils.encryption import generate_aes_key, generate_random_iv, derive_encryption_key
 
 
 PORT_FILE_PATH = "C:/git/Kerberos/AuthServer/port.info.txt"
@@ -27,7 +27,7 @@ class AuthServer:
         self.__port_file_location = port_file_location
         self.__msg_file_location = msg_file_location
         self.__clients_file_location = clients_file_location
-        self.__ticket_expiration_time:timedelta = timedelta(hours=1)
+        self.__ticket_expiration_time: timedelta = timedelta(hours=1)
         self.__version = version
 
         #files locks
@@ -162,8 +162,8 @@ class AuthServer:
                             
                         #get list of servers
                         server_list = self.__read_server_file()
-                        response_string = self.__format_servers_list(server_list)
-                        response = ResponseStructure(self.version, ResponseEnums.SERVER_LIST.value, payload=response_string).pack() #prepare response as bytes
+                        response_bytes = self.build_servers_list(server_list)
+                        response = ResponseStructure(self.version, ResponseEnums.SERVER_LIST.value, payload=response_bytes).pack() #prepare response as bytes
                         connection.sendall(response)
                     except Exception as e: #if 
                         print(f"Failed to get list of servers.\t{e}")
@@ -212,20 +212,35 @@ class AuthServer:
                             response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
                             connection.sendall(response)
                         
-                        else:
-                            # Prepare the response with the server's information
-                            
+                        # Prepare the response with the server's information
+                        else: 
                             #--1-- Generate AES_key for the server-client communication
-                            AES_key = generate_aes_key() 
+                            AES_key = generate_aes_key()
                             
-                            #--2-- Create 'EncryptedKey' object and 'Ticket' object as part of the response
-                            encrypted_key = EncryptedKey.create(the_client, nonce, AES_key) # Create the EncryptedKey object for the client to decipher
-                            ticket = Ticket.create(the_server, the_client.id, self.ticket_expiration_time, AES_key, self.version) #NOTE: XXX: Not sure which version (Auth_server / msg_server)
+                            #--2-- Create 'EncryptedKey' object 
+                            encrypted_key_iv = generate_random_iv()
+                            client_key = derive_encryption_key(the_client.password_hash) # Derive client key based on the client's password_hash
+                            packed_encrypted_key = EncryptedKey(iv=encrypted_key_iv,
+                                                         nonce=nonce,
+                                                         aes_key=AES_key).pack(client_key)
                             
-                            #--3-- Prepare the SymmetricKeyResponse object
-                            SKR_response = SymmetricKeyResponse(client_id=the_client.id, encrypted_key=encrypted_key, ticket=ticket)
+                            #--3-- Create 'Ticket' object
+                            ticket_iv = generate_random_iv()
+                            msg_server_key = derive_encryption_key(the_server.symmetric_key.encode())
+                            creation_time = datetime.now()
+                            expiration_time = creation_time + self.ticket_expiration_time
+                            packed_ticket = Ticket(server_version=self.version,
+                                            client_id=the_client.id,
+                                            server_id=the_server.server_id,
+                                            creation_time=creation_time,
+                                            ticket_iv=ticket_iv,
+                                            aes_key=AES_key,
+                                            expiration_time=expiration_time).pack(msg_server_key)
                             
-                            #--4-- Send response
+                            #--4-- Prepare the SymmetricKeyResponse object
+                            SKR_response = SymmetricKeyResponse(client_id=the_client.id, encrypted_key=packed_encrypted_key, ticket=packed_ticket)
+                            
+                            #--5-- Send response
                             response = ResponseStructure(self.version, ResponseEnums.SYMMETRIC_KEY.value, payload=SKR_response).pack() #prepare response as bytes
                             connection.sendall(response)
                     
@@ -456,21 +471,28 @@ class AuthServer:
         
         return False  # IP address and port are not in use by any server
     
-    def __format_servers_list(servers: list[Server]):
+    #Build servers list to send
+    def build_servers_list(self, servers: list[Server]) -> bytes:
         """
-        Format the list of servers into a string.
+        Build a byte concatenation of 'ServerInList' objects from given list of 'Server'
 
         Args:
-            servers (list[Server]): List of Server objects.
+            servers (list[Server]): Servers to extract the parameters from
 
         Returns:
-            str: Formatted string representing the servers list.
+            bytes: concatenation of bytes of 'ServerInList' objects
         """
-        formatted_string = "Servers list:\n"
-        for i, server in enumerate(servers):
-            server_info = f"{server.server_name} - {server.server_ip}:{server.server_port} - {server.server_id}"
-            formatted_string += f"server[{i}] - {server_info}\n"
-        return formatted_string
+        server_in_list_objects = []
+        for server in servers:
+            # Convert Server object to ServerInList object
+            server_id_bytes = bytes.fromhex(server.server_id)
+            server_in_list = ServerInList(server_id_bytes, server.server_name, server.server_ip, server.server_port)
+            server_in_list_objects.append(server_in_list)
+        
+        serialized_data = b''
+        for server in server_in_list_objects:
+            serialized_data += server.pack()
+        return serialized_data
 
 
     # ------- GETS -------

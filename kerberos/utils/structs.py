@@ -3,18 +3,31 @@ import datetime
 import hashlib
 from typing import Optional, List
 from datetime import datetime, timedelta
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad, unpad
 
 import utils.encryption as Enc
-from utils.utils import datetime_to_bytes
+import utils.decryption as Dec
+from utils.utils import datetime_to_bytes, is_valid_port, is_valid_ip
+
+#TODO: add verification for the rest of the structures
 
 RESPONSE_HEADER_SIZE = 7
 REQUEST_HEADER_SIZE = 23
 
 class ResponseStructure:
-    def __init__(self, version: str, code: str, payload: Optional[str]) -> None:
+    def __init__(self, version: str, code: str, payload: Optional[str | str]) -> None:
         self.version = version[:1]  # Limit to 1 byte
         self.code = code[:2]  # Limit to 2 bytes
-        self.payload_size = len(payload.encode('utf-8')) if payload else 0 # len() return int (= 4 bytes)
+        
+        #set payload_size
+        if self.payload is None:
+            self.payload_size = 0
+        elif isinstance(self.payload, bytes):
+            self.payload_size = len(self.payload)
+        else:
+            # If it's a string, encode it to bytes and get the length. len() return int (= 4 bytes)
+            self.payload_size = len(self.payload.encode('utf-8'))
         self.payload = payload
         
     # ---------- PACK / UNPACK ----------
@@ -23,10 +36,12 @@ class ResponseStructure:
         version_bytes = self.version.encode('utf-8')
         code_bytes = self.code.encode('utf-8')
 
-        if self.payload is not None:
-            payload_bytes = self.payload.encode('utf-8')
-        else:
+        if self.payload is None:
             payload_bytes = b''
+        elif isinstance(self.payload, bytes):
+            payload_bytes = self.payload
+        else:
+            payload_bytes = self.payload.encode('utf-8')
 
         format_string = f'<1s2sI{len(payload_bytes)}s'
         return struct.pack(format_string, version_bytes, code_bytes, self.payload_size, payload_bytes)
@@ -50,11 +65,19 @@ class ResponseStructure:
         return self.payload
         
 class RequestStructure:
-    def __init__(self, client_id: str, version: str, code: str, payload: Optional[str]) -> None:
+    def __init__(self, client_id: str, version: str, code: str, payload: Optional[str | bytes]) -> None:
         self.client_id = client_id[:16]  # Limit to 16 bytes
         self.version = version[:1]  # Limit to 1 byte
         self.code = code[:2]  # Limit to 2 bytes
-        self.payload_size = len(payload.encode('utf-8')) if payload else 0 # len() return int (= 4 bytes)
+        
+        #set payload_size
+        if self.payload is None:
+            self.payload_size = 0
+        elif isinstance(self.payload, bytes):
+            self.payload_size = len(self.payload)
+        else:
+            # If it's a string, encode it to bytes and get the length. len() return int (= 4 bytes)
+            self.payload_size = len(self.payload.encode('utf-8'))
         self.payload = payload
          
     # ---------- PACK / UNPACK ----------
@@ -64,10 +87,12 @@ class RequestStructure:
         version_bytes = self.version.encode('utf-8')
         code_bytes = self.code.encode('utf-8')
 
-        if self.payload is not None:
-            payload_bytes = self.payload.encode('utf-8')
-        else:
+        if self.payload is None:
             payload_bytes = b''
+        elif isinstance(self.payload, bytes):
+            payload_bytes = self.payload
+        else:
+            payload_bytes = self.payload.encode('utf-8')
 
         format_string = f'<16s1s2sI{len(payload_bytes)}s'
         return struct.pack(format_string, client_id_bytes, version_bytes, code_bytes, self.payload_size, payload_bytes)
@@ -322,6 +347,84 @@ class Server:
     def set_version(self, version: int) -> None:
         self.version = version
 
+class ServerInList:
+    def __init__(self, id: bytes, name: str, ip: str, port: int):
+        """
+        Create a ServerInList object.
+
+        Args:
+            id (bytes): The server's ID (16 bytes).
+            name (str): The server's name (up to 255 characters).
+            ip (str): The server's IP address (4 bytes in dotted decimal format).
+            port (int): The server's port number (2 bytes).
+        """
+        # Verify ID length
+        if len(id) != 16:
+            raise ValueError("Server ID must be exactly 16 bytes")
+        self.id = id
+
+        # Verify Name length
+        if len(name) > 255:
+            raise ValueError("Server name exceeds 255 characters")
+        self.name = name
+
+        # Verify IP format
+        if not is_valid_ip(ip):
+            raise ValueError("Invalid IP address format")
+        self.ip = ip
+
+        # Verify Port range
+        if not is_valid_port(port):
+            raise ValueError("Port must be a 2-byte unsigned integer (0-65535)")
+        self.port = port
+
+    def pack(self) -> bytes:
+        """
+        Pack the ServerInList object into a binary representation.
+
+        Returns:
+            bytes: Packed binary data.
+        """
+        # Define the format string for packing the data
+        format_string = f'<16sB{len(self.name)}s4sH'
+        
+        # Pack the data into bytes
+        packed_data = struct.pack(format_string,
+                                  self.id,
+                                  len(self.name),
+                                  self.name.encode('utf-8'),
+                                  self.ip.encode('utf-8'),
+                                  self.port)
+        
+        return packed_data
+
+    @classmethod
+    def unpack(cls, data: bytes) -> 'ServerInList':
+        """
+        Unpack binary data into a ServerInList object.
+
+        Args:
+            data (bytes): Binary data to unpack.
+
+        Returns:
+            ServerInList: Unpacked ServerInList object.
+        """
+        # Define the format string for unpacking the data
+        format_string = '<16sB255s4sH'
+        
+        # Unpack the data into individual fields
+        id, name_len, name_bytes, ip_bytes, port = struct.unpack(format_string, data)
+        
+        # Decode the name and IP fields
+        name = name_bytes[:name_len].decode('utf-8')
+        ip = '.'.join(str(byte) for byte in ip_bytes)
+        
+        return cls(id, name, ip, port)
+
+    def __str__(self):
+        """Print the ServerInList object in the specified format."""
+        return f"{self.name} - {self.ip}:{self.port} - {self.id.hex().upper()}"
+
 #Client's property
 class Lastseen:
     """ Part of the Client's Information """
@@ -365,152 +468,186 @@ class Lastseen:
     
 #part of Response 1603 - sending to the client an encrypted symmetric key between the server and the client.
 class EncryptedKey:
-    def __init__(self, encrypted_key_iv: bytes, encrypted_nonce: bytes, encrypted_server_key: bytes):
+    def __init__(self, iv: bytes, nonce: bytes, aes_key: bytes):
         """
-        Encrypted key structure for the client to decrypt to connect the server
+        Represents an encrypted key structure.
 
         Args:
-            encrypted_key_iv (bytes): The IV that used to encrypt the 'nonce' and the 'server_key' (The IV itself not encrypted)
-            encrypted_nonce (bytes): The client's nonce encrypted with this IV and client's password_hash
-            encrypted_server_key (bytes): The AES_key (symmetric key) to connect the client<->server (encrypted the same as above)
+            iv (bytes): Initialization Vector for encryption.
+            nonce (bytes): Nonce value to be encrypted.
+            aes_key (bytes): AES key to be encrypted.
         """
-        self.encrypted_key_iv = encrypted_key_iv
-        self.encrypted_nonce = encrypted_nonce
-        self.encrypted_server_key = encrypted_server_key
+        # Validate IV
+        if len(iv) != 16:
+            raise ValueError("IV must be exactly 16 bytes")
+        
+        # Validate Nonce
+        if len(nonce) != 8:
+            raise ValueError("Nonce must be exactly 8 bytes")
 
-    def pack(self) -> bytes:
-        ''' Pack the components into a binary representation '''
-        if len(self.encrypted_key_iv) != 16:
-            raise ValueError("The encrypted key IV must be 16 bytes long")
-        if len(self.encrypted_nonce) != 8:
-            raise ValueError("The encrypted nonce must be 8 bytes long")
-        if len(self.encrypted_server_key) != 32:
-            raise ValueError("The encrypted server key must be 32 bytes long")
+        # Validate AES Key
+        if len(aes_key) != 32:
+            raise ValueError("AES key must be exactly 32 bytes")
 
-        return struct.pack('<16s8s32s', self.encrypted_key_iv, self.encrypted_nonce, self.encrypted_server_key)
+        self.iv = iv
+        self.nonce = nonce
+        self.aes_key = aes_key
 
-    @classmethod
-    def unpack(cls, data: bytes) -> 'EncryptedKey':
-        ''' Unpack the binary representation into an EncryptedKey object '''
-        if len(data) != 56:
-            raise ValueError("The data must be 56 bytes long")
-
-        encrypted_key_iv, encrypted_nonce, encrypted_server_key = struct.unpack('<16s8s32s', data)
-        return cls(encrypted_key_iv, encrypted_nonce, encrypted_server_key)
-    
-    @classmethod
-    def create(cls, client_obj: Client, nonce: str, aes_key: bytes) -> 'EncryptedKey':
+    def pack(self, key: bytes) -> bytes:
         """
-        Create EncryptedKey object for the client to decipher 
+        Pack the EncryptedKey object into a binary representation,
+        encrypting the nonce and AES key with the given key and IV.
 
         Args:
-            client_obj (Client): the targeted client
-            nonce (str): his own nonce (for varification)
-            aes_key (bytes): the symmetric key to connect the server 
-
-        Raises:
-            e: General failure
+            key (bytes): Symmetric key for encryption.
 
         Returns:
-            EncryptedKey: New object includes encrypted_nonce, encrypted_aes_key, the IV used for the ecnryption
+            bytes: Encrypted binary representation of the EncryptedKey object.
         """
-        try:
-            # Step 1: Derive client key based on the client's password_hash
-            client_key = Enc.derive_encryption_key(client_obj.password_hash)
-            
-            # Step 2: Generate random IV for the encryption of the nonce and AES_key
-            encryption_key_iv = Enc.generate_random_iv() 
-            
-            # Step 3: Encrypt the nonce
-            encrypted_nonce = Enc.encrypt_with_aes_cbc(client_key, encryption_key_iv, nonce.encode()) 
-            
-            # Step 4: Encrypt the AES_key
-            encrypted_aes_key = Enc.encrypt_with_aes_cbc(client_key, encryption_key_iv, aes_key) 
-            
-            # Step 5: Create the object and return
-            return cls(encrypted_key_iv=encryption_key_iv,
-                            encrypted_nonce=encrypted_nonce,
-                            encrypted_server_key=encrypted_aes_key)
-        except Exception as e:
-            print(f"Failed to create 'EncryptedKey' object with given client object and nonce")
-            raise e
+        # Encrypt nonce and AES key together
+        cipher = AES.new(key, AES.MODE_CBC, self.iv)
+        plaintext = self.nonce + self.aes_key
+        padded_plaintext = pad(plaintext, AES.block_size)
+        encrypted_data = cipher.encrypt(padded_plaintext)
 
+        # Return IV + Encrypted data
+        return self.iv + encrypted_data
+
+    @classmethod
+    def unpack(cls, data: bytes, key: bytes) -> 'EncryptedKey':
+        """
+        Unpack binary data into an EncryptedKey object, decrypting the data
+        using the provided key.
+
+        Args:
+            data (bytes): Binary data to unpack.
+            key (bytes): Symmetric key for decryption.
+
+        Returns:
+            EncryptedKey: Unpacked EncryptedKey object.
+        """
+        # Ensure data is at least 32 bytes (IV + encrypted data)
+        if len(data) < 32:
+            raise ValueError("Invalid data length for unpacking EncryptedKey")
+
+        # Extract IV
+        iv = data[:16]
+
+        # Decrypt the rest of the data
+        cipher = AES.new(key, AES.MODE_CBC, iv)
+        decrypted_data = cipher.decrypt(data[16:])
+        
+        # Remove padding
+        unpadded_data = unpad(decrypted_data, AES.block_size)
+
+        # Split decrypted data into nonce and AES key
+        nonce = unpadded_data[:8]
+        aes_key = unpadded_data[8:]
+
+        return cls(iv, nonce, aes_key)
+     
 #part of Response 1603 - sending to the client an encrypted ticket to pass to server.
 class Ticket:
-    def __init__(self, server_version: int, client_id: bytes, server_id: bytes, creation_time: bytes, ticket_iv: bytes, encrypted_aes_key: bytes, encrypted_expiration_time: bytes):
+    def __init__(self, server_version: int, client_id: bytes, server_id: bytes, creation_time: datetime, ticket_iv: bytes, aes_key: bytes, expiration_time: datetime):
+        """ Ticket structure for client-server communication """
+        if not 0 <= server_version <= 255:
+            raise ValueError("Server version must be a single byte (0-255)")
+        if len(client_id) != 16:
+            raise ValueError("Client ID must be exactly 16 bytes")
+        if len(server_id) != 16:
+            raise ValueError("Server ID must be exactly 16 bytes")
+        if len(ticket_iv) != 16:
+            raise ValueError("Ticket IV must be exactly 16 bytes")
+        if len(aes_key) != 32:
+            raise ValueError("AES key must be exactly 32 bytes")
+        if not isinstance(creation_time, datetime):
+            raise ValueError("Creation time must be a datetime object")
+        if not isinstance(expiration_time, datetime):
+            raise ValueError("Expiration time must be a datetime object")
+
         self.server_version = server_version
         self.client_id = client_id
         self.server_id = server_id
         self.creation_time = creation_time
         self.ticket_iv = ticket_iv
-        self.encrypted_aes_key = encrypted_aes_key
-        self.encrypted_expiration_time = encrypted_expiration_time
+        self.aes_key = aes_key
+        self.expiration_time = expiration_time
         
-    # --------- pack / unpack ---------
-    def pack(self) -> bytes:
-        """ Pack the Ticket object into a binary representation """
-        # Define the format string for packing the data
-        format_string = '<B16s16s8s16s32s8s'
-        
-        # Pack the data into bytes
-        packed_data = struct.pack(format_string,
-                                  self.server_version,
-                                  self.client_id,
-                                  self.server_id,
-                                  self.creation_time,
-                                  self.ticket_iv,
-                                  self.encrypted_aes_key,
-                                  self.encrypted_expiration_time)
-        
+    def pack(self, key: bytes) -> bytes:
+        """
+        Pack the Ticket object into a binary representation,
+        encrypting the AES key and expiration time with the given key and IV.
+
+        Args:
+            key (bytes): Symmetric key for encryption.
+
+        Returns:
+            bytes: Encrypted binary representation of the Ticket object.
+        """
+        # Convert creation_time and expiration_time to 8-byte representations
+        creation_time_bytes = int(self.creation_time.timestamp()).to_bytes(8, byteorder='little', signed=False)
+        expiration_time_bytes = int(self.expiration_time.timestamp()).to_bytes(8, byteorder='little', signed=False)
+
+        # Pack the data
+        packed_data = struct.pack('<B16s16s8s16s', self.server_version, self.client_id, self.server_id, creation_time_bytes, self.ticket_iv)
+
+        # Encrypt AES key and expiration_time with the provided key and IV
+        cipher = AES.new(key, AES.MODE_CBC, self.ticket_iv)
+        aes_key_exp_time = self.aes_key + expiration_time_bytes  # Combine both for encryption
+        padded_data = pad(aes_key_exp_time, AES.block_size)
+        encrypted_data = cipher.encrypt(padded_data)
+
+        packed_data += encrypted_data
+
         return packed_data
     
     @classmethod
-    def unpack(cls, data: bytes) -> 'Ticket':
-        """ Unpack binary data into a Ticket object """
-        # Define the format string for unpacking the data
-        format_string = '<B16s16s8s16s32s8s'
+    def unpack(cls, data: bytes, key: bytes) -> 'Ticket':
+        """
+        Unpack binary data into a Ticket object,
+        decrypting the AES key and expiration time with the given key.
+
+        Args:
+            data (bytes): Encrypted binary data to unpack.
+            key (bytes): Symmetric key for decryption.
+
+        Returns:
+            Ticket: Unpacked Ticket object.
+        """
+        # Unpack the fixed-length data fields
+        unpacked_data = struct.unpack('<B16s16s8s16s', data)
+
+        # Extract fields from unpacked data
+        server_version, client_id, server_id, creation_time_bytes, ticket_iv = unpacked_data
+
+        # Extract the remaining bytes for encrypted_data
+        encrypted_data_length = len(data) - struct.calcsize('<B16s16s8s16s')
+        encrypted_data = data[-encrypted_data_length:]
+
+        # Decrypt AES key and expiration_time with the provided key and IV
+        cipher = AES.new(key, AES.MODE_CBC, ticket_iv)
+        decrypted_data = cipher.decrypt(encrypted_data)
         
-        # Unpack the data into individual fields
-        server_version, client_id, server_id, creation_time, ticket_iv, encrypted_aes_key, encrypted_expiration_time = struct.unpack(format_string, data)
+        # Extract AES key and expiration_time
+        aes_key = decrypted_data[:32]
+        expiration_time_bytes = decrypted_data[32:]
         
-        # Create a new Ticket object with the unpacked data
-        return cls(server_version, client_id, server_id, creation_time, ticket_iv, encrypted_aes_key, encrypted_expiration_time)
-    
-    @classmethod
-    def create(cls, server_obj: Server, client_id: str, expiration_time_delta: timedelta, aes_key: bytes, server_verion: int) -> 'Ticket':
-        # Step 1: Derive msg server key based on the server's symmetric key
-        msg_server_key = Enc.derive_encryption_key(server_obj.symmetric_key.encode()) 
-        
-        # Step 2: Generate random IV for the encryption of the Expiration_time and AES_key
-        ticket_iv = Enc.generate_random_iv()
-        
-        # Step 3: Define creation_time
-        creation_time = datetime.now()
-        
-        # Step 4: Create the expiration time based on the creation time and the Auth_server deltas
-        expiration_time = creation_time + expiration_time_delta
-        
-        # Step 5: Convert the time objects to 8 bytes as required
-        creation_time_8_bytes = datetime_to_bytes(creation_time)
-        expiration_time_8_bytes = datetime_to_bytes(expiration_time)
-        
-        # Step 6: Encrypt the AES key
-        server_encrypted_aes_key = Enc.encrypt_with_aes_cbc(msg_server_key, ticket_iv, aes_key)
-        
-        # Step 7: Encrypt the Expiration_time
-        encrypted_expiration_time = Enc.encrypt_with_aes_cbc(msg_server_key, ticket_iv, expiration_time_8_bytes)
-        
-        # Step 8: Create the object and return
-        return cls(server_version=server_verion, #NOTE: XXX: Not sure which version (Auth_server / msg_server)
-                        client_id=client_id,
-                        server_id=server_obj.server_id,
-                        creation_time = creation_time_8_bytes,
-                        ticket_iv= ticket_iv,
-                        encrypted_aes_key=server_encrypted_aes_key,
-                        encrypted_expiration_time=encrypted_expiration_time)
-      
+        # Convert creation_time and expiration_time from bytes
+        creation_time = datetime.fromtimestamp(int.from_bytes(creation_time_bytes, byteorder='little'))
+        expiration_time = datetime.fromtimestamp(int.from_bytes(expiration_time_bytes, byteorder='little'))
+
+        return cls(server_version, client_id, server_id, creation_time, ticket_iv, aes_key, expiration_time)
+       
 class SymmetricKeyResponse:
-    def __init__(self, client_id: bytes, encrypted_key: EncryptedKey, ticket: Ticket):
+    def __init__(self, client_id: bytes, encrypted_key: bytes, ticket: bytes):
+        """
+        Represent the response in 'Symmetric Key' request to Auth server.
+
+        Args:
+            client_id (bytes): client's id in 16 bytes
+            encrypted_key (bytes): packed 'EncryptedKey' object
+            ticket (bytes): packed 'Ticket' object
+        """
         self.client_id = client_id
         self.encrypted_key = encrypted_key
         self.ticket = ticket
@@ -519,8 +656,8 @@ class SymmetricKeyResponse:
         """ Pack the SymmetricKeyResponse object into a binary representation """
         # Pack the client ID, encrypted key, and ticket
         packed_client_id = self.client_id
-        packed_encrypted_key = self.encrypted_key.pack()
-        packed_ticket = self.ticket.pack()
+        packed_encrypted_key = self.encrypted_key
+        packed_ticket = self.ticket
 
         # Combine the packed data
         packed_data = packed_client_id + packed_encrypted_key + packed_ticket
@@ -533,15 +670,118 @@ class SymmetricKeyResponse:
         # Unpack the client ID
         client_id = data[:16]
         # Unpack the encrypted key
-        encrypted_key = EncryptedKey.unpack(data[16:72])
+        encrypted_key = data[16:72]
         # Unpack the ticket
-        ticket = Ticket.unpack(data[72:])
+        ticket = data[72:]
         
         # Create a new SymmetricKeyResponse object with the unpacked data
         return cls(client_id, encrypted_key, ticket)
 
-    
+class Authenticator:
+    def __init__(self, iv: bytes, version: int, client_id: str, server_id: str, creation_time: bytes):
+        """
+        Authenticator that the client creates to send to the server. All parameters (except the IV) go for encryption.
 
-    
+        Args:
+            iv (bytes): IV to encrypt the next parameters
+            version (int): server version
+            client_id (str): client id
+            server_id (str): target server id
+            creation_time (bytes): creation time
+        """
+        self.iv = iv
+        self.version = version
+        self.client_id = client_id.encode('utf-8')  # Convert string to bytes
+        self.server_id = server_id.encode('utf-8')  # Convert string to bytes
+        self.creation_time = creation_time
+
+    def pack(self) -> bytes:
+        """ Pack the Authenticator object into a binary representation """
+        if len(self.iv) != 16:
+            raise ValueError("IV must be exactly 16 bytes")
+        if len(self.client_id) != 16:
+            raise ValueError("Client ID must be exactly 16 bytes")
+        if len(self.server_id) != 16:
+            raise ValueError("Server ID must be exactly 16 bytes")
+        if len(self.creation_time) != 8:
+            raise ValueError("Creation time must be exactly 8 bytes")
+        if not 0 <= self.version <= 255:
+            raise ValueError("Version must be a single byte (0-255)")
+
+        return struct.pack('<16sB16s16s8s', self.iv, self.version, self.client_id, self.server_id, self.creation_time)
+
+    @classmethod
+    def unpack(cls, data: bytes) -> 'Authenticator':
+        """ Unpack binary data into an Authenticator object """
+        if len(data) != 57:  # 16 + 1 + 16 + 16 + 8 = 57 bytes
+            raise ValueError("Invalid data length for unpacking Authenticator")
+
+        iv, version, client_id, server_id, creation_time = struct.unpack('<16sB16s16s8s', data)
+        # Convert bytes back to strings
+        client_id_str = client_id.decode('utf-8')
+        server_id_str = server_id.decode('utf-8')
+        return cls(iv, version, client_id_str, server_id_str, creation_time)
+
+class EncryptedMessage:
+    def __init__(self, message_iv: bytes, message_content: bytes):
+        """
+        Create an EncryptedMessage object. (client -> msg server)
+
+        Args:
+            message_iv (bytes): IV for message encryption.
+            message_content (bytes): Content of the message to be encrypted.
+        """
+        self.message_iv = message_iv
+        self.message_content = message_content
+
+    def pack(self, aes_key: bytes) -> bytes:
+        """
+        Pack the EncryptedMessage object into a binary representation.
+
+        Args:
+            aes_key (bytes): AES key for encryption.
+
+        Returns:
+            bytes: Packed binary data.
+        """
+        # Encrypt message content
+        cipher = AES.new(aes_key, AES.MODE_CBC, self.message_iv)
+        padded_content = pad(self.message_content, AES.block_size)
+        encrypted_content = cipher.encrypt(padded_content)
+
+        # Get the size of the encrypted content
+        message_size = len(encrypted_content).to_bytes(4, byteorder='little')
+
+        # Pack the data
+        packed_data = struct.pack('<16s4s', self.message_iv, message_size) + encrypted_content
+        return packed_data
+
+    @classmethod
+    def unpack(cls, data: bytes, aes_key: bytes) -> 'EncryptedMessage':
+        """
+        Unpack binary data into an EncryptedMessage object.
+
+        Args:
+            data (bytes): Binary data to unpack.
+            aes_key (bytes): AES key for decryption.
+
+        Returns:
+            EncryptedMessage: Unpacked EncryptedMessage object.
+        """
+        # Unpack the IV and message size
+        message_iv, message_size = struct.unpack('<16s4s', data[:20])
+        message_size = int.from_bytes(message_size, byteorder='little')
+
+        # Extract the encrypted content
+        encrypted_content = data[20:20+message_size]
+
+        # Decrypt the message content
+        cipher = AES.new(aes_key, AES.MODE_CBC, message_iv)
+        decrypted_content = cipher.decrypt(encrypted_content)
+
+        # Remove padding
+        unpadded_content = unpad(decrypted_content, AES.block_size)
+
+        return cls(message_iv, unpadded_content)
 
 

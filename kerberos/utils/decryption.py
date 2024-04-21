@@ -1,6 +1,8 @@
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
 import hashlib
+import struct
+from kerberos.utils.structs import EncryptedKey, Ticket, Authenticator
 
 def derive_client_key(password_hash: bytes, salt: bytes) -> bytes:
     """
@@ -14,6 +16,19 @@ def derive_client_key(password_hash: bytes, salt: bytes) -> bytes:
         bytes: return 'client_key' which based on the client's password_hash
     """
     return hashlib.pbkdf2_hmac('sha256', password_hash, salt, 100000)
+
+def derive_msg_server_key(auth_aes_key: bytes, salt: bytes) -> bytes:
+    """
+    Create 'msg_server_key' from the symmetric key with the auth_server using a key derivation function (e.g., PBKDF2)
+
+    Args:
+        auth_aes_key (bytes): symmetric key in common to msg_server <=> auth_server
+        salt (bytes): server's salt
+
+    Returns:
+        bytes: return 'msg_server_key' which based on the server aes_key
+    """
+    return hashlib.pbkdf2_hmac('sha256', auth_aes_key, salt, 100000)
 
 def decrypt_with_aes_cbc(key: bytes, iv: bytes, ciphertext: bytes) -> bytes:
     """
@@ -31,31 +46,58 @@ def decrypt_with_aes_cbc(key: bytes, iv: bytes, ciphertext: bytes) -> bytes:
     plaintext = unpad(cipher.decrypt(ciphertext), AES.block_size)
     return plaintext
 
-def client_decrypt_encrypted_key(encrypted_key_iv: bytes, encrypted_nonce: bytes, encrypted_server_key: bytes, password: str, salt: bytes) -> tuple[bytes,bytes]:
+def server_decrypt_ticket(ticket_iv: bytes, encrypted_expiration_time: bytes, encrypted_aes_key: bytes, auth_aes_key: bytes, salt: bytes) -> tuple[bytes,bytes]:
     """
-    Function that helps the client to decrypt 'EncryptedKey' object, which consist 'encrypted_nonce' and 'encrypted_server_key' (AES_key)
+    Function that helps the msg server to decrypt 'Ticket' object's parameters, which are 'encrypted_expiration_time' and 'encrypted_aes_key' (AES_key)
 
     Args:
-        encrypted_key_iv (bytes): consist the IV to decrypt the 'Nonce' and 'AES_key', this IV is not encrypted
-        encrypted_nonce (bytes): 'Nonce' to verify the response from Auth_server
-        encrypted_server_key (bytes): AES_key is a shared key between the client and server 
-        password_hash (bytes): Client's password_hash to create the 'client_key'
-        salt (bytes): client's own salt
+        ticket_iv (bytes): IV that encrypted the parameters
+        encrypted_expiration_time (bytes): Expiration time from auth server
+        encrypted_aes_key (bytes): AES_key between the client and the msg_server
+        auth_aes_key (bytes): AES_key between the auth_server and the msg_server
+        salt (bytes): msg server's own salt
 
     Returns:
-        tuple (bytes, bytes): (decrypted_nonce, decrypted_server_key)
+        tuple[bytes,bytes]: (decrypted_expiration_time, decrypted_aes_key)
     """
-    #create password_hash
-    password_hash = hashlib.sha256(password.encode()).digest()
+    # Derive msg server key based on the server's symmetric key
+    msg_server_key = derive_msg_server_key(auth_aes_key, salt) 
     
-    # Derive client key from password hash
-    client_key = derive_client_key(password_hash, salt)
+    # Decrypt the expiration_time *first* then the aes_key using the IV and msg_server_key
+    decrypted_expiration_time = decrypt_with_aes_cbc(msg_server_key, ticket_iv, encrypted_expiration_time)
+    decrypted_aes_key = decrypt_with_aes_cbc(msg_server_key, ticket_iv, encrypted_aes_key)
     
-    # Decrypt the Encrypted Key IV
-    #decrypted_key_iv = decrypt_with_aes_cbc(client_key, encrypted_key_iv[:16], encrypted_key_iv[16:]) #NOTE: uncomment this if using encrypted IV
+    return decrypted_expiration_time, decrypted_aes_key
+
+def decrypt_encrypted_key(data: bytes, key: bytes) -> EncryptedKey:
+    """ Decrypts ciphertext into an EncryptedKey object using AES_CBC with the given key """ #not in used
+    iv = data[:16]  # Extract IV from the beginning of the data
+    ciphertext = data[16:]
     
-    # Decrypt the Encrypted Nonce and AES Key using the decrypted IV and client key
-    decrypted_nonce = decrypt_with_aes_cbc(client_key, encrypted_key_iv, encrypted_nonce) #NOTE: use decrypted_key_iv if the IV is encrypted too
-    decrypted_server_key = decrypt_with_aes_cbc(client_key, encrypted_key_iv, encrypted_server_key)
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    padded_plaintext = cipher.decrypt(ciphertext)
+    plaintext = unpad(padded_plaintext, AES.block_size)
+    return EncryptedKey.unpack(plaintext)
+
+def decrypt_ticket(data: bytes, key: bytes) -> 'Ticket':
+    """ Decrypts ciphertext into a Ticket object """ #not in used
+    # Unpack the data
+    server_version, client_id, server_id, creation_time, ticket_iv, encrypted_aes_key, encrypted_expiration_time = struct.unpack('<B16s16s8s16s32s8s', data[:81])
     
-    return decrypted_nonce, decrypted_server_key
+    # Decrypt the encrypted fields
+    cipher = AES.new(key, AES.MODE_CBC, ticket_iv)
+    aes_key = cipher.decrypt(encrypted_aes_key)
+    expiration_time = cipher.decrypt(encrypted_expiration_time)
+    
+    # Create the Ticket object
+    return Ticket(server_version, client_id, server_id, creation_time, ticket_iv, aes_key, expiration_time)
+
+def decrypt_authenticator(data: bytes, client_key: bytes) -> Authenticator:
+    """ Decrypts the ciphertext into an Authenticator object using AES_CBC with the given client_key """
+    iv = data[:16]  # Extract IV from the beginning of the data
+    ciphertext = data[16:]
+    
+    cipher = AES.new(client_key, AES.MODE_CBC, iv)
+    padded_plaintext = cipher.decrypt(ciphertext)
+    plaintext = unpad(padded_plaintext, AES.block_size)
+    return Authenticator.unpack(plaintext)

@@ -2,10 +2,12 @@ import os
 import socket
 import struct
 import hashlib
-from kerberos.utils.utils import build_reg_payload, is_valid_port, generate_nonce
-from kerberos.utils.structs import RequestStructure, ResponseStructure, RESPONSE_HEADER_SIZE, SymmetricKeyResponse, Ticket, EncryptedKey
+from datetime import datetime
+from kerberos.utils.utils import build_reg_payload, is_valid_port, generate_nonce, is_valid_ip, datetime_to_bytes
+from kerberos.utils.structs import RequestStructure, ResponseStructure, RESPONSE_HEADER_SIZE, SymmetricKeyResponse, Ticket, EncryptedKey, Authenticator, ServerInList, EncryptedMessage
 from kerberos.utils.enums import RequestEnums, ResponseEnums
 from kerberos.utils import decryption as Dec
+from kerberos.utils import encryption as Enc
 
 class ClientApp:
     def __init__(self) -> None:
@@ -94,14 +96,14 @@ class ClientApp:
         except Exception as e:
             print(e)
             return None, None
-
+        
     def __create_info_file(self) -> None:
         """ Create '{self.name}_me.info' file with name and id """
         with open(self.me_file, "w") as file:
             file.write(f"{self.name}\n")
             file.write(f"{self.id}\n")
 
-    def __read_info_file(self):
+    def __read_info_file(self) -> None:
         """ Read me.info file and overwrite name and id with it """
         if os.path.exists(self.me_file):
             with open(self.me_file, "r") as file:
@@ -134,7 +136,7 @@ class ClientApp:
             print(f"Failed to set new password '{new_password}'")
         
     def read_servers_info(self) -> None:
-        """ Read the servers from srv.info file and create dicionary when key is IP. The dicionary is self parameter. """
+        """ Read the servers from srv.info file and update dicionary where key is IP:PORT. The dicionary is self parameter. """
         try:
             if os.path.exists(self.srv_file):
                 with open(self.srv_file, "r") as file:
@@ -164,6 +166,9 @@ class ClientApp:
             if not is_valid_port(port):
                 raise ValueError(f"The port number '{port}' is not valid. Please provide a valid port number between 0 and 65535.")
             
+            if not is_valid_ip(ip):
+                print(f"Invalid IP address format")
+            
             #check if already exists
             key = f"{ip}:{port}"
             self.read_servers_info()
@@ -186,7 +191,6 @@ class ClientApp:
             return
         
 
-
     # --------- handle function + sub_functions ---------
     def handle_user_input(self, user_input: str) -> None:
         """ Get user requests from cmd and activate relevant functions
@@ -196,6 +200,8 @@ class ClientApp:
         """
         # Function to handle user input
         parts = user_input.split()
+        
+        # ---- GET AES KEY FOR SERVER ----
         if len(parts) >= 3 and parts[0].lower() == "get_key":
             try:
                 ip_port = parts[1].split(":")
@@ -211,6 +217,8 @@ class ClientApp:
                 self.get_sym_key(ip, port, server_id)
             except ValueError:
                 print("Invalid port number.")
+                
+        # ---- CONNECT MSG SERVER ----
         elif len(parts) >= 2 and parts[0].lower() == "connect":
             try:
                 # Extract IP and port
@@ -218,25 +226,31 @@ class ClientApp:
                 if len(ip_port) != 2:
                     print("Invalid format. Please use 'connect ip:port'.")
                     return
+                #validate ip
                 ip = ip_port[0]
+                if not is_valid_ip(ip):
+                    print(f"Invalid IP address format")
+                    return
+                #validate port
                 port = int(ip_port[1])
                 if not is_valid_port(port):
                     print(f"The port number '{port}' is not valid. Please provide a valid port number between 0 and 65535.")
                     return
-
-                # Call get_sym_key function
-                self.connect_server(ip, port) #TODO
+                self.connect_server(ip, port)
             except Exception as e:
                 print(f"Failed to connect to the server '{ip}:{port}'.\t{e}")
+                
+        # ---- SET PASSWORD ----
         elif len(parts) >= 2 and parts[0].lower() == "set_password":
-            # Set new password
             new_password = ' '.join(parts[1:])
             self.set_password(new_password)
+            
+        # ---- GET SERVERS LIST ----
         elif len(parts) >= 1 and parts[0].lower() == "get_servers_list":
-            # Get servers list
             self.get_servers_list()
+            
+        # ---- ADD SERVER ----
         elif len(parts) >= 2 and parts[0].lower() == "add_server":
-            # Add server
             ip_port = parts[1].split(":")
             if len(ip_port) != 2:
                 print("Invalid format. Please use 'add_server ip:port'.")
@@ -244,18 +258,32 @@ class ClientApp:
             ip = ip_port[0]
             port = int(ip_port[1])
             self.__add_server_info(ip, port)
+            
+        # ---- SEND MESSAGE ----
         elif len(parts) >= 3 and parts[0].lower() == "send":
-            # Send message
+            #extract ip&port
             ip_port = parts[1].split(":")
             if len(ip_port) != 2:
                 print("Invalid format. Please use 'send ip:port msg'.")
                 return
+            
+            #validate ip
             ip = ip_port[0]
+            if not is_valid_ip(ip):
+                print(f"Invalid IP address format")
+                return
+            #validate port
             port = int(ip_port[1])
+            if not is_valid_port(port):
+                print(f"The port number '{port}' is not valid. Please provide a valid port number between 0 and 65535.")
+                return
+            
+            #extract message
             msg = ' '.join(parts[2:])
-            self.send_msg(ip, port, msg) #TODO
+            self.send_msg(ip, port, msg)
+            
+        # ---- REGISTER ---- 
         elif len(parts) >= 1 and parts[0].lower() == "register":
-            # Register
             self.startup()
         else:
             print("Invalid command. Please use 'connect ip:port', 'set_password password', 'get_servers_list', 'add_server ip:port', 'send ip:port msg', or 'register'.")
@@ -269,15 +297,9 @@ class ClientApp:
             server_id (str): target server's id
         """
         try:
-            # Create a socket object
-            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            
             # get auth_server address
             auth_server_ip, auth_server_port = self.__get_auth_server_info()
-            
-            # Connect to the auth server
-            client_socket.connect((auth_server_ip, auth_server_port))
-            
+
             #create the payload
             nonce = generate_nonce()
             payload = f"{server_id}\x00{nonce.decode('utf-8')}"
@@ -287,6 +309,12 @@ class ClientApp:
                                        version=1,
                                        code=RequestEnums.SYMMETRIC_KEY.value,
                                        payload=payload).pack()
+            
+            # Create a socket object
+            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        
+            # Connect to the auth server
+            client_socket.connect((auth_server_ip, auth_server_port))
             
             # Send data to the server
             client_socket.sendall(request)
@@ -304,21 +332,20 @@ class ClientApp:
             responseEnum_obj = ResponseEnums.find(response_obj.code)
             match responseEnum_obj:
                 case ResponseEnums.SYMMETRIC_KEY:
-                    #get the SymmetricKeyResponse object
-                    SymKey_response = SymmetricKeyResponse.unpack(payload.encode('utf-8'))
+                    #Unpack the Payload
+                    SymKey_response = SymmetricKeyResponse.unpack(response_obj.payload.encode('utf-8'))
                     
                     #validate client id
                     if not SymKey_response.client_id == self.id:
                         print(f"Response include incorrect client ID = '{SymKey_response.client_id}' , when my client_id is '{self.id}'")
                         return
                     
-                    decrypted_nonce, decrypted_key = Dec.client_decrypt_encrypted_key(
-                        encrypted_key_iv=SymKey_response.encrypted_key.encrypted_key_iv,
-                        encrypted_nonce=SymKey_response.encrypted_key.encrypted_nonce,
-                        encrypted_server_key=SymKey_response.encrypted_key.encrypted_server_key,
-                        password=self.password,
-                        salt=self.salt
-                    )
+                    #decrypt EncryptedKey parameters
+                    password_hash = hashlib.sha256(self.password.encode()).digest() # Create password_hash
+                    client_key = Dec.derive_client_key(password_hash, self.salt) # Derive client key from password hash
+                    encrypted_key = EncryptedKey.unpack(SymKey_response.encrypted_key, key=client_key)
+                    decrypted_nonce = encrypted_key.nonce
+                    decrypted_key = encrypted_key.aes_key
                     
                     # !!! Check if decrypted succeed !!!
                     if nonce != decrypted_nonce:
@@ -330,9 +357,9 @@ class ClientApp:
                         key = f"{ip}:{port}"
                         if key not in self.servers_dict:
                              self.servers_dict[key] = {}
-                        self.servers_dict[key]['id'] = server_id
-                        self.servers_dict[key]['key'] = decrypted_key
-                        self.servers_dict[key]['ticket'] = SymKey_response.ticket
+                        self.servers_dict[key]['id'] = server_id # (str)
+                        self.servers_dict[key]['key'] = decrypted_key #symmetric key shard with the server (32 bytes)
+                        self.servers_dict[key]['ticket'] = SymKey_response.ticket #Ticket encrypted (bytes)
                         
                     print(f"Symmetric key received successfully")
                 case ResponseEnums.SERVER_GENERAL_ERROR:
@@ -345,24 +372,141 @@ class ClientApp:
         except Exception as e:
             print(f"Failed to get Symmetric Key for server '{server_id}'.\t{e}")
     
-    # get servers list        
-    def get_servers_list(self) -> None:
-        """ Send Auth_server a request to get list of all servers, and then print it to the user """
+    # send Authenticator & Ticket to server
+    def connect_server(self, ip: str, port: int) -> None:
         try:
+            # Get target server info
+            key = f"{ip}:{port}"
+            target_server = self.servers_dict.get(key)
+            if target_server is None or not target_server:
+                print(f"Server {key} is not exists in Client's DB, please use 'get_key' command before")
+                return
+
+            # Create IV for encryption
+            authenticator_iv = Enc.generate_random_iv()
+            
+            # Create the Authenticator
+            authenticator_creation_time = datetime_to_bytes(datetime.now())
+            authenticator = Authenticator(
+                iv=authenticator_iv,
+                version=1,
+                client_id=self.id,
+                server_id=target_server.get('id'),
+                creation_time=authenticator_creation_time
+            )
+            
+            #ecnrypt it
+            encrypted_auth = Enc.encrypt_authenticator(authenticator=authenticator, client_key=target_server.get('key'))
+            
+            #prepare the request
+            payload = encrypted_auth+target_server.get('ticket')
+            request = RequestStructure(client_id=self.id,
+                                       version=1,
+                                       code=RequestEnums.DELIVER_SYMMETRY_KEY.value,
+                                       payload=payload).pack()
+
             # Create a socket object
             client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             
+            # Connect to target server
+            client_socket.connect((ip, port))
+            
+            # Send data to the server
+            client_socket.sendall(request)
+
+            # Receive response from the server
+            response_data = self.__receive_all(client_socket, header_size=RESPONSE_HEADER_SIZE)  # Assuming 'ResponseStructure' header size is fixed at 7 bytes
+            
+            # Close the socket
+            client_socket.close()
+            
+            # Unpack the received data into a ResponseStructure object
+            response_obj = ResponseStructure.unpack(response_data)
+            
+            # Process the message based on the code
+            responseEnum_obj = ResponseEnums.find(response_obj.code)
+            match responseEnum_obj:
+                case ResponseEnums.SERVER_MESSAGE_ACCEPT_SYMMETRIC_KEY:
+                    print(f"Server '{key}' received Symmetric key successfully") #TODO: something to do here?
+                case ResponseEnums.SERVER_GENERAL_ERROR:
+                    print(f"Server '{key}' failed to receive Symmetric Key.")
+                case _:
+                    print(f"Unfamiliar response code: '{response_obj.code}'.")
+
+        except Exception as e:
+            print(f"Failed to connect the server '{key}'.\t{e}")
+        
+    # Send message
+    def send_msg(self, ip: str, port: int, msg: str):
+        try:
+            # Get target server info
+            key = f"{ip}:{port}"
+            target_server = self.servers_dict.get(key)
+            if target_server is None or not target_server:
+                print(f"Server {key} is not exists in Client's DB, please use 'get_key' command before")
+                return
+
+            # Create IV for encryption
+            message_iv = Enc.generate_random_iv()
+            
+            # Create the payload (the EncryptedMessage)
+            payload = EncryptedMessage(message_iv, msg).pack(aes_key=target_server.get('key'))
+            
+            #prepare the request
+            request = RequestStructure(client_id=self.id,
+                                       version=1,
+                                       code=RequestEnums.MESSAGE_TO_SERVER.value,
+                                       payload=payload).pack()
+
+            # Create a socket object
+            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            
+            # Connect to target server
+            client_socket.connect((ip, port))
+            
+            # Send data to the server
+            client_socket.sendall(request)
+
+            # Receive response from the server
+            response_data = self.__receive_all(client_socket, header_size=RESPONSE_HEADER_SIZE)  # Assuming 'ResponseStructure' header size is fixed at 7 bytes
+            
+            # Close the socket
+            client_socket.close()
+            
+            # Unpack the received data into a ResponseStructure object
+            response_obj = ResponseStructure.unpack(response_data)
+            
+            # Process the message based on the code
+            responseEnum_obj = ResponseEnums.find(response_obj.code)
+            match responseEnum_obj:
+                case ResponseEnums.SERVER_MESSAGE_RECIEVED_MSG_SUCCESSFULLY:
+                    print(f"Server '{key}' received the message successfully")
+                case ResponseEnums.SERVER_GENERAL_ERROR:
+                    print(f"Server '{key}' failed to receive the message.")
+                case _:
+                    print(f"Unfamiliar response code: '{response_obj.code}'.")
+
+        except Exception as e:
+            print(f"Failed to connect the server '{key}'.\t{e}")
+    
+    # get servers list
+    def get_servers_list(self) -> None:
+        """ Send Auth_server a request to get list of all servers, and then print it to the user """
+        try:
             # get auth_server address
             auth_server_ip, auth_server_port = self.__get_auth_server_info()
-            
-            # Connect to the auth server
-            client_socket.connect((auth_server_ip, auth_server_port))
             
             # Create the servers_list Request
             request = RequestStructure(client_id=self.id,
                                        version=1,
                                        code=RequestEnums.SERVER_LIST.value,
                                        payload=None).pack()
+            
+            # Create a socket object
+            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            
+            # Connect to the auth server
+            client_socket.connect((auth_server_ip, auth_server_port))
             
             # Send data to the server
             client_socket.sendall(request)
@@ -380,7 +524,8 @@ class ClientApp:
             responseEnum_obj = ResponseEnums.find(response_obj.code)
             match responseEnum_obj:
                 case ResponseEnums.SERVER_LIST:
-                    print(f"Server List request complete succefully.\n{response_obj.payload}")
+                    string_of_print = self.__deserialize_and_print_servers_list(response_obj.payload.encode())
+                    print(f"Server List request complete succefully.\n{string_of_print}")
                 case ResponseEnums.SERVER_GENERAL_ERROR:
                     print(f"Server List request failed.")
                 case ResponseEnums.SERVER_REJECT_REQUEST:
@@ -390,6 +535,29 @@ class ClientApp:
 
         except Exception as e:
             print(f"Server list request failed, please try again.\t{e}")
+
+    def __deserialize_and_print_servers_list(data: bytes) -> str:
+        """
+        Return String of ready to print servers list to display to client.
+
+        Args:
+            data (bytes): concatenation of bytes which represent list of 'ServerInList' objects
+
+        Returns:
+            str: string to print of all server searated on in each row
+        """
+        # Create list[ServerInList]
+        server_list = []
+        while data:
+            server = ServerInList.unpack(data[:279])  # 16 + 1 + 255 + 4 + 2 = 278
+            server_list.append(server)
+            data = data[279:]
+        
+        # Print the list
+        result = ""
+        for server in server_list:
+            result += str(server) + "\n"
+        return result
 
     # Registration process
     def registration_request(self, auth_server_ip: str, auth_server_port: int) -> bool:
@@ -403,13 +571,7 @@ class ClientApp:
         Returns:
             bool: True if process complete successfully, otherwise False
         """
-        # Create a socket object
-        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
         try:
-            # Connect to the server
-            client_socket.connect((auth_server_ip, auth_server_port))
-            
             # Create the Registration Request
             reg_payload = build_reg_payload(self.name, self.password)
             request = RequestStructure(client_id="0000000000000000", #NOTE: first ID doesnt matter
@@ -417,6 +579,12 @@ class ClientApp:
                                        code=RequestEnums.CLIENT_REGISTRATION.value,
                                        payload=reg_payload).pack()
             
+            # Create a socket object
+            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            
+            # Connect to the server
+            client_socket.connect((auth_server_ip, auth_server_port))
+
             # Send data to the server
             client_socket.sendall(request)
 

@@ -15,6 +15,24 @@ def is_valid_port(port) -> bool:
     except ValueError:
         return False
 
+def is_valid_ip(ip: str) -> bool:
+    """
+    validate ip in the form of "127.0.0.1", where IP is 4 bytes value
+
+    Args:
+        ip (str): string of ip (4 bytes in dotted decimal format)
+
+    Returns:
+        bool: True if valid otherwise False
+    """
+    try:
+        ip_bytes = [int(byte) for byte in ip.split('.')]
+        if len(ip_bytes) != 4 or any(byte < 0 or byte > 255 for byte in ip_bytes):
+            return False #raise ValueError("Invalid IP address format")
+        else: return True
+    except ValueError:
+        return False
+
 def read_port(file_path: str, default_port: int) -> int:
     ''' get port.info file path and return the port in it'''
     try:

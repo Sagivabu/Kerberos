@@ -1,8 +1,11 @@
 import os
 import hashlib
+import struct
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
-from Crypto.Util.Padding import pad
+from Crypto.Util.Padding import pad, unpad
+
+from kerberos.utils.structs import Authenticator, EncryptedKey, Ticket
 
 def derive_encryption_key(based_on: bytes) -> bytes:
     """
@@ -47,4 +50,50 @@ def encrypt_with_aes_cbc(key: bytes, iv: bytes, plaintext: bytes) -> bytes:
     ciphertext = cipher.encrypt(pad(plaintext, AES.block_size))
     return ciphertext
 
+# ---------- EncryptedKey ----------
+def encrypt_encrypted_key(encrypted_key: EncryptedKey, key: bytes) -> bytes: 
+    """ Encrypts an EncryptedKey object using AES_CBC with the given key """ #not in used
+    if len(encrypted_key.encrypted_key_iv) != 16:
+        raise ValueError("The IV must be 16 bytes long")
+    if len(encrypted_key.encrypted_nonce) != 8:
+        raise ValueError("The encrypted nonce must be 8 bytes long")
+    if len(encrypted_key.encrypted_server_key) != 32:
+        raise ValueError("The encrypted server key must be 32 bytes long")
 
+    cipher = AES.new(key, AES.MODE_CBC, encrypted_key.encrypted_key_iv)
+    plaintext = encrypted_key.pack()
+    padded_plaintext = pad(plaintext, AES.block_size)
+    ciphertext = cipher.encrypt(padded_plaintext)
+    return encrypted_key.encrypted_key_iv + ciphertext  # Prepend IV to ciphertext
+
+# ---------- Ticket ----------
+def encrypt_ticket(ticket: 'Ticket', key: bytes) -> bytes:
+    """ Encrypts only the 'encrypted_aes_key' and 'encrypted_expiration_time' fields of a Ticket object """ #not in used
+    if len(ticket.ticket_iv) != 16:
+        raise ValueError("The ticket IV must be 16 bytes long")
+    if len(ticket.encrypted_aes_key) != 32:
+        raise ValueError("The encrypted AES key must be 32 bytes long")
+    if len(ticket.encrypted_expiration_time) != 8:
+        raise ValueError("The encrypted expiration time must be 8 bytes long")
+    
+    # Pack the non-encrypted fields
+    packed_data = struct.pack('<B16s16s8s', ticket.server_version, ticket.client_id, ticket.server_id, ticket.creation_time)
+    
+    # Encrypt the encrypted fields
+    cipher = AES.new(key, AES.MODE_CBC, ticket.ticket_iv)
+    encrypted_aes_key = cipher.encrypt(ticket.encrypted_aes_key)
+    encrypted_expiration_time = cipher.encrypt(ticket.encrypted_expiration_time)
+    
+    # Concatenate everything
+    packed_data += ticket.ticket_iv + encrypted_aes_key + encrypted_expiration_time
+    
+    return packed_data
+
+# ---------- Authenticator ----------
+def encrypt_authenticator(authenticator: Authenticator, client_key: bytes) -> bytes:
+    """ Encrypts the Authenticator object using AES_CBC with the given client_key """
+    cipher = AES.new(client_key, AES.MODE_CBC, authenticator.iv)
+    plaintext = authenticator.pack()
+    padded_plaintext = pad(plaintext, AES.block_size)
+    ciphertext = cipher.encrypt(padded_plaintext)
+    return authenticator.iv + ciphertext  # Prepend IV to ciphertext
