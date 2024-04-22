@@ -3,7 +3,7 @@ import hashlib
 import struct
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
-from Crypto.Util.Padding import pad, unpad
+from Crypto.Util.Padding import pad
 
 from kerberos.utils.structs import Authenticator, EncryptedKey, Ticket
 

@@ -2,13 +2,10 @@ import struct
 import datetime
 import hashlib
 from typing import Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
-
-import utils.encryption as Enc
-import utils.decryption as Dec
-from utils.utils import datetime_to_bytes, is_valid_port, is_valid_ip
+from utils.utils import  is_valid_port, is_valid_ip
 
 #TODO: add verification for the rest of the structures
 

@@ -389,7 +389,7 @@ class AuthServer:
         except Exception as e:
             print(f"Failed to add server to txt file: '{self.msg_file}', with the next server details: '{server}'")
             raise
-        
+
     def __read_server_file(self) -> list[Server]:
         """
         Private function to read servers file (msg.info.txt) and return list of Servers from file
