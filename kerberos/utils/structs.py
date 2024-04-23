@@ -7,15 +7,28 @@ from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
 from utils.utils import  is_valid_port, is_valid_ip
 
-#TODO: add verification for the rest of the structures
-
 RESPONSE_HEADER_SIZE = 7
 REQUEST_HEADER_SIZE = 23
 
 class ResponseStructure:
-    def __init__(self, version: str, code: str, payload: Optional[str | str]) -> None:
-        self.version = version[:1]  # Limit to 1 byte
-        self.code = code[:2]  # Limit to 2 bytes
+    def __init__(self, version: str, code: str, payload: Optional[str | bytes]) -> None:
+        """
+        Response format
+
+        Args:
+            version (str): kerberos protocol version
+            code (str): Indicates the payload format which helps to decipher the payload later
+            payload (Optional[str  |  bytes]): the content to send
+        """
+         # Limit version to 1 byte
+        if not 0 <= len(version) <= 1:
+            raise ValueError("Version must be a single byte")
+        self.version = version
+        
+        # Limit code to 2 bytes
+        if not 0 <= len(code) <= 2:
+            raise ValueError("Code must be 2 bytes or less")
+        self.code = code
         
         #set payload_size
         if self.payload is None:
@@ -63,9 +76,29 @@ class ResponseStructure:
         
 class RequestStructure:
     def __init__(self, client_id: str, version: str, code: str, payload: Optional[str | bytes]) -> None:
-        self.client_id = client_id[:16]  # Limit to 16 bytes
-        self.version = version[:1]  # Limit to 1 byte
-        self.code = code[:2]  # Limit to 2 bytes
+        """
+        Request format
+
+        Args:
+            client_id (str): sender id (usually the client)
+            version (str): kerberos protocol version
+            code (str): Indicates the payload format which helps to decipher the payload later
+            payload (Optional[str  |  bytes]): the content to send
+        """
+        # Validate client_id
+        if len(client_id) != 16:
+            raise ValueError("Client ID must be exactly 16 bytes")
+        self.client_id = client_id
+        
+        # Limit version to 1 byte
+        if not 0 <= len(version) <= 1:
+            raise ValueError("Version must be a single byte")
+        self.version = version
+        
+        # Limit code to 2 bytes
+        if not 0 <= len(code) <= 2:
+            raise ValueError("Code must be 2 bytes or less")
+        self.code = code
         
         #set payload_size
         if self.payload is None:
@@ -202,11 +235,28 @@ class Client:
             password_hash (bytes): SHA-256 password hash (32 bytes)
             datetime_obj (datetime.datetime): datetime object including: year, month, day, hour, minute, second
         """
+         # Limit id to 16 bytes
+        if len(id) != 16:
+            raise ValueError("ID must be exactly 16 bytes")
+        self.id = id.encode('utf-8')
+
+        # Limit name to 255 characters
+        # Limit server_name to 255 characters
+        if len(name) > 255:
+            raise ValueError("Name must be 255 characters or less")
+        self.name = name
+
+        # Ensure password_hash is exactly 32 bytes
+        if len(password_hash) != 32:
+            raise ValueError("Password hash must be 32 bytes")
+        self.password_hash = password_hash
+
+        # Validate datetime_obj
+        try:
+            self.lastseen = Lastseen.from_datetime(datetime_obj)
+        except ValueError as e:
+            raise ValueError("Invalid datetime object") from e
         # Convert user_id string to bytes (UTF-8 encoding)
-        self.id = id.encode('utf-8')[:16]  # Limit to 16 bytes
-        self.name = name[:255]  # Limit to 255 characters
-        self.password_hash = password_hash  # Should be exactly 32 bytes
-        self.lastseen = Lastseen.from_datetime(datetime_obj)
 
     @classmethod
     def from_plain_password(cls, id: str, name: str, password: str, datetime_obj: datetime):
@@ -284,12 +334,34 @@ class Server:
             server_id (str): The server's unique ID in ASCII where every 2 chars represent 8 bits in hex.
             symmetric_key (str): The long-term symmetric key for the server in Base64 format.
         """
+        # Validate server IP using is_valid_ip function
+        if not is_valid_ip(server_ip):
+            raise ValueError("Invalid server IP address format")
         self.server_ip = server_ip
+
+        # Validate server port using is_valid_port function
+        if not is_valid_port(server_port):
+            raise ValueError("Invalid server port")
         self.server_port = server_port
-        self.server_name = server_name[:255]  # Limit to 255 characters
+
+        # Limit server_name to 255 characters
+        if len(server_name) > 255:
+            raise ValueError("Server name must be 255 characters or less")
+        self.server_name = server_name
+
+        # Validate server_id length (16 bytes)
+        if len(server_id) != 16:
+            raise ValueError("Server ID must be 16 bytes long")
         self.server_id = server_id
+
+        # Validate symmetric_key length (32 bytes)
+        if len(symmetric_key) != 32:
+            raise ValueError("Symmetric key must be 32 bytes long")
         self.symmetric_key = symmetric_key
-        self.version = version
+
+        # Validate version as a single byte (0-255)
+        if not 0 <= version <= 255:
+            raise ValueError("Version must be a single byte (0-255)")
 
     def write_to_txt(self, file_path: str):
         """
@@ -645,7 +717,11 @@ class SymmetricKeyResponse:
             encrypted_key (bytes): packed 'EncryptedKey' object
             ticket (bytes): packed 'Ticket' object
         """
+        # Validate client_id length (16 bytes)
+        if len(client_id) != 16:
+            raise ValueError("Client ID must be 16 bytes long")
         self.client_id = client_id
+        
         self.encrypted_key = encrypted_key
         self.ticket = ticket
 
@@ -728,6 +804,9 @@ class EncryptedMessage:
             message_iv (bytes): IV for message encryption.
             message_content (str): Content of the message to be encrypted.
         """
+        # Validate message IV length (16 bytes)
+        if len(message_iv) != 16:
+            raise ValueError("Message IV must be 16 bytes long")
         self.message_iv = message_iv
         self.message_content = message_content
 

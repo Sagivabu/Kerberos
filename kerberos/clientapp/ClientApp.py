@@ -4,7 +4,7 @@ import struct
 import hashlib
 from datetime import datetime
 from kerberos.utils.utils import build_reg_payload, is_valid_port, generate_nonce, is_valid_ip, datetime_to_bytes
-from kerberos.utils.structs import RequestStructure, ResponseStructure, RESPONSE_HEADER_SIZE, SymmetricKeyResponse, Ticket, EncryptedKey, Authenticator, ServerInList, EncryptedMessage
+from kerberos.utils.structs import RequestStructure, ResponseStructure, RESPONSE_HEADER_SIZE, SymmetricKeyResponse, EncryptedKey, Authenticator, ServerInList, EncryptedMessage
 from kerberos.utils.enums import RequestEnums, ResponseEnums
 from kerberos.utils import decryption as Dec
 from kerberos.utils import encryption as Enc

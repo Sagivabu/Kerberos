@@ -5,7 +5,7 @@ import struct
 from datetime import datetime, timedelta
 from kerberos.utils.enums import RequestEnums, ResponseEnums
 from kerberos.utils.utils import read_port, update_txt_file, read_txt_file, is_valid_port
-from kerberos.utils.structs import RequestStructure, ResponseStructure ,Client, Server, EncryptedKey, Ticket, SymmetricKeyResponse, RESPONSE_HEADER_SIZE, REQUEST_HEADER_SIZE, ServerInList
+from kerberos.utils.structs import RequestStructure, ResponseStructure ,Client, Server, EncryptedKey, Ticket, SymmetricKeyResponse, REQUEST_HEADER_SIZE, ServerInList
 from kerberos.utils.encryption import generate_aes_key, generate_random_iv, derive_encryption_key
 
 
@@ -323,22 +323,6 @@ class AuthServer:
                 client_list.append(client)
         return client_list
 
-    def __is_client_exist(self, client_obj: Client) -> bool: #NOTE: It was requested in the project to find if only same name exists
-        """
-        Return True if client_obj exists in client.txt
-
-        Args:
-            client_obj (Client): Client object
-
-        Returns:
-            bool: True if exists, False otherwise
-        """
-        client_list = self.__read_clients_file()
-        for client in client_list:
-            if client == client_obj: 
-                return True
-        return False
-    
     def __is_client_exist_by_name(self, client_name: str) -> bool:
         """
         Return True if client_name exists in client.txt
@@ -414,22 +398,6 @@ class AuthServer:
             symmetric_key = lines[i + 3].strip()
             servers.append(Server(server_ip, server_port, server_name, server_id, symmetric_key))
         return servers
-
-    def __is_server_exist(self, server_obj: Server) -> bool: #NOTE: It was requested in the project to find if only same name exists
-        """
-        Return True if server_obj exists in msg.info.txt
-
-        Args:
-            server_obj (Server): Server object
-
-        Returns:
-            bool: True if exists, False otherwise
-        """
-        server_list = self.__read_server_file()
-        for server in server_list:
-            if server == server_obj: 
-                return True
-        return False
 
     def __is_server_exist_by_name(self, server_name: str) -> bool:
         """

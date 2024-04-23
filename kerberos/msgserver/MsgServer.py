@@ -70,7 +70,6 @@ class MsgServer:
 
         return data
 
-    #TODO: STOPPED HERE
     def __handle_client(self, connection: socket.socket, client_address: tuple[str, int]):
         """
         Function to handle communication with a single client.
