@@ -20,7 +20,7 @@ class AuthServer:
                 port_file_location: str = PORT_FILE_PATH, \
                 msg_file_location: str = MSG_FILE_PATH, \
                 clients_file_location: str = CLIENTS_FILE_PATH,
-                version: int = 1):
+                version: int = 24):
         self.server_name = server_name 
         self.server_default_port = server_default_port
         self.__server_max_connections = server_connections

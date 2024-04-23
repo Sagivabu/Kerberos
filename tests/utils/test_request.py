@@ -4,7 +4,7 @@ from kerberos.utils.structs import RequestStructure
 @dataclass
 class Test_Request():
     client_id = '123456789ABCDEFG'
-    version = '1'
+    version = '24'
     code = 'AB'
     payload = f"This message is from client_id '{client_id}' with version '{version}' and code '{code}'."
 

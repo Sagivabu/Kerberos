@@ -10,7 +10,7 @@ from kerberos.utils import decryption as Dec
 from kerberos.utils import encryption as Enc
 
 class ClientApp:
-    def __init__(self) -> None:
+    def __init__(self, version: int = 24) -> None:
         self.name = None
         self.password = None
         self.id = None
@@ -19,6 +19,7 @@ class ClientApp:
         self.__me_file = f"{self.name}_me.info"
         
         self.__salt = f"Sagiv_Abu_206122459_{self.name}".encode() #each client have its own salt for derive client key
+        self.__version = version
         
         self.startup() #XXX: NOTE: shall i put the startup here?
     
@@ -34,6 +35,10 @@ class ClientApp:
     @property
     def salt(self):
         return self.__salt
+    
+    @property
+    def version(self):
+        return self.__version
     
     # ---- Functions ----
     
@@ -306,7 +311,7 @@ class ClientApp:
             
             # Create the symmetric key Request
             request = RequestStructure(client_id=self.id,
-                                       version=1,
+                                       version=self.version,
                                        code=RequestEnums.SYMMETRIC_KEY.value,
                                        payload=payload).pack()
             
@@ -389,9 +394,9 @@ class ClientApp:
             authenticator_creation_time = datetime_to_bytes(datetime.now())
             authenticator = Authenticator(
                 iv=authenticator_iv,
-                version=1,
-                client_id=self.id,
-                server_id=target_server.get('id'),
+                version=self.version,
+                client_id=self.id.encode(),
+                server_id=target_server.get('id').encode(),
                 creation_time=authenticator_creation_time
             )
             
@@ -399,9 +404,11 @@ class ClientApp:
             encrypted_auth = Enc.encrypt_authenticator(authenticator=authenticator, client_key=target_server.get('key'))
             
             #prepare the request
-            payload = encrypted_auth+target_server.get('ticket')
+            authenticator_length = len(encrypted_auth).to_bytes(4, byteorder='little')
+            ticket = target_server.get('ticket')
+            payload = authenticator_length + encrypted_auth + ticket
             request = RequestStructure(client_id=self.id,
-                                       version=1,
+                                       version=self.version,
                                        code=RequestEnums.DELIVER_SYMMETRY_KEY.value,
                                        payload=payload).pack()
 
@@ -454,7 +461,7 @@ class ClientApp:
             
             #prepare the request
             request = RequestStructure(client_id=self.id,
-                                       version=1,
+                                       version=self.version,
                                        code=RequestEnums.MESSAGE_TO_SERVER.value,
                                        payload=payload).pack()
 
@@ -498,7 +505,7 @@ class ClientApp:
             
             # Create the servers_list Request
             request = RequestStructure(client_id=self.id,
-                                       version=1,
+                                       version=self.version,
                                        code=RequestEnums.SERVER_LIST.value,
                                        payload=None).pack()
             
@@ -575,7 +582,7 @@ class ClientApp:
             # Create the Registration Request
             reg_payload = build_reg_payload(self.name, self.password)
             request = RequestStructure(client_id="0000000000000000", #NOTE: first ID doesnt matter
-                                       version=1, #NOTE: version doesnt matter
+                                       version=self.version,
                                        code=RequestEnums.CLIENT_REGISTRATION.value,
                                        payload=reg_payload).pack()
             

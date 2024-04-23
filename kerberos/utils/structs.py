@@ -573,7 +573,7 @@ class Ticket:
     def pack(self, key: bytes) -> bytes:
         """
         Pack the Ticket object into a binary representation,
-        encrypting the AES key and expiration time with the given key and IV.
+        encrypting the AES key and expiration time with the given key and with self IV.
 
         Args:
             key (bytes): Symmetric key for encryption.
@@ -675,21 +675,21 @@ class SymmetricKeyResponse:
         return cls(client_id, encrypted_key, ticket)
 
 class Authenticator:
-    def __init__(self, iv: bytes, version: int, client_id: str, server_id: str, creation_time: bytes):
+    def __init__(self, iv: bytes, version: int, client_id: bytes, server_id: bytes, creation_time: bytes):
         """
         Authenticator that the client creates to send to the server. All parameters (except the IV) go for encryption.
 
         Args:
             iv (bytes): IV to encrypt the next parameters
             version (int): server version
-            client_id (str): client id
-            server_id (str): target server id
+            client_id (bytes): client id
+            server_id (bytes): target server id
             creation_time (bytes): creation time
         """
         self.iv = iv
         self.version = version
-        self.client_id = client_id.encode('utf-8')  # Convert string to bytes
-        self.server_id = server_id.encode('utf-8')  # Convert string to bytes
+        self.client_id = client_id
+        self.server_id = server_id
         self.creation_time = creation_time
 
     def pack(self) -> bytes:
@@ -715,18 +715,18 @@ class Authenticator:
 
         iv, version, client_id, server_id, creation_time = struct.unpack('<16sB16s16s8s', data)
         # Convert bytes back to strings
-        client_id_str = client_id.decode('utf-8')
-        server_id_str = server_id.decode('utf-8')
+        client_id_str = client_id
+        server_id_str = server_id
         return cls(iv, version, client_id_str, server_id_str, creation_time)
 
 class EncryptedMessage:
-    def __init__(self, message_iv: bytes, message_content: bytes):
+    def __init__(self, message_iv: bytes, message_content: str):
         """
         Create an EncryptedMessage object. (client -> msg server)
 
         Args:
             message_iv (bytes): IV for message encryption.
-            message_content (bytes): Content of the message to be encrypted.
+            message_content (str): Content of the message to be encrypted.
         """
         self.message_iv = message_iv
         self.message_content = message_content
@@ -742,8 +742,9 @@ class EncryptedMessage:
             bytes: Packed binary data.
         """
         # Encrypt message content
+        message_bytes = self.message_content.encode()
         cipher = AES.new(aes_key, AES.MODE_CBC, self.message_iv)
-        padded_content = pad(self.message_content, AES.block_size)
+        padded_content = pad(message_bytes, AES.block_size)
         encrypted_content = cipher.encrypt(padded_content)
 
         # Get the size of the encrypted content
@@ -777,7 +778,7 @@ class EncryptedMessage:
         decrypted_content = cipher.decrypt(encrypted_content)
 
         # Remove padding
-        unpadded_content = unpad(decrypted_content, AES.block_size)
+        unpadded_content = unpad(decrypted_content, AES.block_size).decode()
 
         return cls(message_iv, unpadded_content)
 

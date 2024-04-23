@@ -1,22 +1,21 @@
 import socket
 import threading
-import uuid
 import struct
-from datetime import datetime, timedelta
+from datetime import datetime
 from kerberos.utils.enums import RequestEnums, ResponseEnums
-from kerberos.utils.utils import read_port, update_txt_file, read_txt_file, is_valid_port, is_valid_ip
-from kerberos.utils.structs import RequestStructure, ResponseStructure ,Client, Server, EncryptedKey, Ticket, SymmetricKeyResponse, RESPONSE_HEADER_SIZE, REQUEST_HEADER_SIZE, ServerInList
-from kerberos.utils.encryption import generate_aes_key, generate_random_iv, derive_encryption_key
+from kerberos.utils.utils import is_valid_port, is_valid_ip
+from kerberos.utils.structs import RequestStructure, ResponseStructure, Ticket, EncryptedMessage, REQUEST_HEADER_SIZE
+from kerberos.utils import decryption as Dec
 
 MSG_FILE_PATH = "C:/git/Kerberos/msgserver/msg.info.txt"
 
 class MsgServer:
-    def __init__(self, name: str, ip: str, port: int, max_connections: int = 10, version: int = 1, msg_file_location: str = MSG_FILE_PATH):
+    def __init__(self, name: str, ip: str, port: int, max_connections: int = 10, version: int = 24, msg_file_location: str = MSG_FILE_PATH):
         self.name = name
         self.ip = ip 
         self.port = port
-        self.id = None 
-        self.__auth_key = None
+        self.id : bytes = None 
+        self.__auth_key : bytes = None
         self.__max_connections = max_connections
         self.__version = version
         self.__msg_file_location = msg_file_location
@@ -25,7 +24,7 @@ class MsgServer:
         self.__msg_file_lock = threading.Lock() # Define a lock to manage the threads that attend to msg.info.txt file
         
         #connected clients
-        self.clients = {} #key = client_id, value = aes_key
+        self.clients = {} #key = 'ip:port', value: dict where keys are 'aes_key' and 'id'
     
     # ---- GETS ----
     @property
@@ -43,8 +42,6 @@ class MsgServer:
     @property
     def msg_file_lock(self):
         return self.__msg_file_lock
-
-    
     
     def __receive_all(self, connection: socket.socket, header_size: int) -> bytes:
         """
@@ -81,6 +78,11 @@ class MsgServer:
         print(f"Connection from {client_address}")
 
         try:
+            # Get client info
+            ip = client_address[0]
+            port = client_address[1]
+            client_dict_key = f'{ip}:{port}'
+            
             # Receive the message
             data = self.__receive_all(connection, header_size=REQUEST_HEADER_SIZE)  # Assuming 'RequestStructure' header size is fixed at 23 bytes
 
@@ -90,17 +92,78 @@ class MsgServer:
             # Process the message based on the code
             requestEnum_obj = RequestEnums.find(request_obj.code)
             match requestEnum_obj:
-                case RequestEnums.CLIENT_REGISTRATION: # Client Registration
-                    print("Received client registration request:")
-                    print("Payload:", request_obj.payload)
+                case RequestEnums.DELIVER_SYMMETRY_KEY: # Receiving Symmetric key from client
+                    print("Received delivery of symmetric key request")
+                    try:
+                        # -- 1 -- Extract from payload 'authenticator' + 'ticket' ---
+                        payload = request_obj.payload.encode()
+                        
+                        # Read lengths of encrypted objects
+                        authenticator_length = int.from_bytes(payload[:4], byteorder='little')
+
+                        # Split into encrypted_authenticator and encrypted_ticket parts
+                        encrypted_authenticator = payload[4:4 + authenticator_length]
+                        encrypted_ticket = payload[4 + authenticator_length:]
+                        
+                        # -- 2 -- Decrypt 'Ticket' to get the AES_key for the decryption of the authenticator
+                        ticket = Ticket.unpack(data=encrypted_ticket,key=self.__auth_key)
+                        
+                        #verification:
+                        if ticket.server_id != self.id:
+                            raise ValueError(f"Server's ID does not match the Ticket's ID.")
+                        elif datetime.now() > ticket.expiration_time:
+                            raise ValueError(f"Ticket has expired")
+                        else:
+
+                            # Create client object in dictionary
+                            self.clients[client_dict_key] = {
+                                'id': ticket.client_id,
+                                'key': ticket.aes_key
+                            }
+
+                        # -- 3 -- Decrypt authenticator for client's identity verification
+                        authenticator = Dec.decrypt_authenticator(data=encrypted_authenticator, client_key=ticket.aes_key)
+                        
+                        #verification:
+                        if authenticator.client_id != ticket.client_id:
+                            raise ValueError(f"Ticket's client ID does not match the Authenticator client ID.")
+                        elif authenticator.server_id != self.id:
+                            raise ValueError(f"Server's ID does not match the Authenticator's ID.")
+                        #elif TODO: need to do something with creation time?
+                        else:
+                            # All Good
+                            print(f"Symmetric key from client delivered successfully, connection has been set, ready to receive messages from client {ticket.client_id}.")
+                            response = ResponseStructure(self.version, ResponseEnums.SERVER_MESSAGE_ACCEPT_SYMMETRIC_KEY.value, payload=None).pack()
+                            connection.sendall(response)
+                        
+                    except Exception as e:
+                        print(f"Stopping delivery of symmetric key process.\t{e}")
+                        response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack()
+                        connection.sendall(response)
+                        
                     
-                    pass
-                case RequestEnums.SERVER_REGISTRATION: # Server Registration (NOTE: BONUS)
-                    print("Received server registration request:")
-                    print("Payload:", request_obj.payload)
-                    
-                    pass
-                    
+                case RequestEnums.MESSAGE_TO_SERVER: # Server Registration (NOTE: BONUS)
+                    print("Received print message request")
+                    try:
+                        # Set parameters
+                        payload = request_obj.payload.encode()
+                        client = self.clients.get(client_dict_key)
+                        if not client:
+                            raise ValueError(f"Client '{client_dict_key}' AES key not found. Please deliver AES key before sending a message.")
+                        else:
+                            client_aes_key = client.get('key')
+                            client_id = client.get('id')
+                        
+                        # Decrypt 'EncryptedMessage' using the AES key with the client
+                        message = EncryptedMessage.unpack(data=payload, key=client_aes_key)
+                        
+                        # Print the message
+                        print(f"'{client_id}' |\t{message.message_content}")
+                    except Exception as e:
+                        print(f"Failed to get message from connection: {client_address}.\t{e}")
+                        response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack()
+                        connection.sendall(response)
+                        
                 case _:
                     print(f"Unfamiliar request code: '{request_obj.code}'")
                     response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack()
@@ -142,12 +205,12 @@ class MsgServer:
                 raise ValueError(f"Server's name must be at least 1 char and up to 255 chars")
             
             #get server id
-            self.id = lines[i + 2].strip()
+            self.id = lines[i + 2].strip().encode() #bytes
             if len(self.id) != 16:
                 raise ValueError("Server ID must be exactly 16 bytes")
             
             
-            self.__auth_key = lines[i + 3].strip()
+            self.__auth_key = lines[i + 3].strip().encode() #bytes
             if len(self.__auth_key) != 32:
                 raise ValueError("Symmetric key must be exactly 32 bytes")
         return
@@ -158,9 +221,6 @@ class MsgServer:
         # Initialize the server's parameters
         self.__read_msg_info_file()
         server_address = (self.ip, self.port) 
-        
-        #
-        
 
         # Craeete and bind the socket to the port
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
