@@ -11,9 +11,9 @@ from kerberos.utils import encryption as Enc
 
 class ClientApp:
     def __init__(self, version: int = 24) -> None:
-        self.name = None
-        self.password = None
-        self.id = None
+        self.name : str
+        self.password : str
+        self.id : str
         self.servers_dict = {} #key: "ip:port", value: dict  ->  keys: 'id', 'aes_key', 'ticket'
         self.__srv_file = f"{self.name}_srv.info"
         self.__me_file = f"{self.name}_me.info"
@@ -94,13 +94,13 @@ class ClientApp:
                 return ip, port
         except FileNotFoundError:
             print(f"Error: File '{self.srv_file}' not found.")
-            return None, None
+            raise
         except ValueError:
             print(f"Error: Invalid data format in '{self.srv_file}'. Expected 'ip:port'.")
-            return None, None
+            raise
         except Exception as e:
             print(e)
-            return None, None
+            raise
         
     def __create_info_file(self) -> None:
         """ Create '{self.name}_me.info' file with name and id """
@@ -154,7 +154,7 @@ class ClientApp:
                         key = f"{ip}:{port}"
                         if key not in self.servers_dict:
                             self.servers_dict[key] = {}
-            return self.servers_dict
+            return
         except Exception as e:
             print(f"Failed to read '{self.name}_srv.info' file and create dictionary from the servers in it.\t{e}")
             raise e
@@ -307,7 +307,7 @@ class ClientApp:
 
             #create the payload
             nonce = generate_nonce()
-            payload = f"{server_id}\x00{nonce.decode('utf-8')}"
+            payload = f"{server_id}\x00{nonce.decode('utf-8')}".encode()
             
             # Create the symmetric key Request
             request = RequestStructure(client_id=self.id,
@@ -337,13 +337,16 @@ class ClientApp:
             responseEnum_obj = ResponseEnums.find(response_obj.code)
             match responseEnum_obj:
                 case ResponseEnums.SYMMETRIC_KEY:
+                    #Check payload exists
+                    if not response_obj.payload:
+                        raise ValueError(f"Symmetric Key Response must include 'SymmetricKeyResponse' object as a payload")
+                    
                     #Unpack the Payload
-                    SymKey_response = SymmetricKeyResponse.unpack(response_obj.payload.encode('utf-8'))
+                    SymKey_response = SymmetricKeyResponse.unpack(response_obj.payload)
                     
                     #validate client id
-                    if not SymKey_response.client_id == self.id:
-                        print(f"Response include incorrect client ID = '{SymKey_response.client_id}' , when my client_id is '{self.id}'")
-                        return
+                    if not SymKey_response.client_id == self.id.encode():
+                        raise ValueError(f"Symmetric Key Response include incorrect client ID = '{SymKey_response.client_id}' , when my client_id is '{self.id}'")
                     
                     #decrypt EncryptedKey parameters
                     password_hash = hashlib.sha256(self.password.encode()).digest() # Create password_hash
@@ -354,9 +357,9 @@ class ClientApp:
                     
                     # !!! Check if decrypted succeed !!!
                     if nonce != decrypted_nonce:
-                        print(f"Failed to get Symmetric key to target server. origin 'nonce' != 'decrypted_nonce'.\n \
+                        raise ValueError(f"Failed to get Symmetric key to target server. origin 'nonce' != 'decrypted_nonce'.\n \
                             This may happen due to incorrect password which lead to incorrect decryption process or incorrect response (imply on a third person reponse)")
-                        return
+                    
                     else: # The decryption is correct
                         # Save server's information
                         key = f"{ip}:{port}"
@@ -384,8 +387,7 @@ class ClientApp:
             key = f"{ip}:{port}"
             target_server = self.servers_dict.get(key)
             if target_server is None or not target_server:
-                print(f"Server {key} is not exists in Client's DB, please use 'get_key' command before")
-                return
+                raise ValueError(f"Server {key} is not exists in Client's DB, please use 'get_key' command before")
 
             # Create IV for encryption
             authenticator_iv = Enc.generate_random_iv()
@@ -450,8 +452,7 @@ class ClientApp:
             key = f"{ip}:{port}"
             target_server = self.servers_dict.get(key)
             if target_server is None or not target_server:
-                print(f"Server {key} is not exists in Client's DB, please use 'get_key' command before")
-                return
+                raise ValueError(f"Server {key} is not exists in Client's DB, please use 'get_key' command before")
 
             # Create IV for encryption
             message_iv = Enc.generate_random_iv()
@@ -531,7 +532,9 @@ class ClientApp:
             responseEnum_obj = ResponseEnums.find(response_obj.code)
             match responseEnum_obj:
                 case ResponseEnums.SERVER_LIST:
-                    string_of_print = self.__deserialize_and_print_servers_list(response_obj.payload.encode())
+                    if not response_obj.payload:
+                        raise ValueError(f"Server List response must contain data in the payload")
+                    string_of_print = self.__deserialize_and_print_servers_list(response_obj.payload)
                     print(f"Server List request complete succefully.\n{string_of_print}")
                 case ResponseEnums.SERVER_GENERAL_ERROR:
                     print(f"Server List request failed.")
@@ -543,7 +546,7 @@ class ClientApp:
         except Exception as e:
             print(f"Server list request failed, please try again.\t{e}")
 
-    def __deserialize_and_print_servers_list(data: bytes) -> str:
+    def __deserialize_and_print_servers_list(self, data: bytes) -> str:
         """
         Return String of ready to print servers list to display to client.
 
@@ -580,7 +583,7 @@ class ClientApp:
         """
         try:
             # Create the Registration Request
-            reg_payload = build_reg_payload(self.name, self.password)
+            reg_payload = build_reg_payload(self.name, self.password).encode()
             request = RequestStructure(client_id="0000000000000000", #NOTE: first ID doesnt matter
                                        version=self.version,
                                        code=RequestEnums.CLIENT_REGISTRATION.value,
@@ -608,21 +611,22 @@ class ClientApp:
             responseEnum_obj = ResponseEnums.find(response_obj.code)
             match responseEnum_obj:
                 case ResponseEnums.REGISTRATION_SUCCESS:
-                    self.id = response_obj.payload
+                    if not response_obj.payload:
+                        raise ValueError(f"Registration response must contain ID as a payload")
+                    
+                    self.id = response_obj.payload.decode()
                     print(f"Registration Process complete succefully")
                     return True
                 case ResponseEnums.REGISTRATION_FAILED:
-                    print(f"Registration Process Failed")
-                    return False
+                    raise ValueError(f"Authentication Server returned ERROR")
                 case ResponseEnums.REGISTRATION_USER_EXISTS:
-                    print(f"Failed to register new client, name '{self.name}' already exists in DB.")
-                    return False
+                    raise ValueError(f"Failed to register new client, name '{self.name}' already exists in DB.")
                 case _:
-                    print(f"Unfamiliar response code: '{response_obj.code}'")
-                    return False
+                    raise ValueError(f"Unfamiliar response code: '{response_obj.code}'")
 
         except Exception as e:
             print(f"Registration Process failed, please try again.\t{e}")
+            return False
 
     # Registration & startup process
     def startup(self) -> None:

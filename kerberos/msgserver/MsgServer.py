@@ -14,8 +14,8 @@ class MsgServer:
         self.name = name
         self.ip = ip 
         self.port = port
-        self.id : bytes = None 
-        self.__auth_key : bytes = None
+        self.id : bytes 
+        self.__auth_key : bytes
         self.__max_connections = max_connections
         self.__version = version
         self.__msg_file_location = msg_file_location
@@ -94,8 +94,11 @@ class MsgServer:
                 case RequestEnums.DELIVER_SYMMETRY_KEY: # Receiving Symmetric key from client
                     print("Received delivery of symmetric key request")
                     try:
+                        if not request_obj.payload:
+                            raise ValueError(f"Delivery of Symmetric Key must conatin data in the payload")
+                        
                         # -- 1 -- Extract from payload 'authenticator' + 'ticket' ---
-                        payload = request_obj.payload.encode()
+                        payload = request_obj.payload
                         
                         # Read lengths of encrypted objects
                         authenticator_length = int.from_bytes(payload[:4], byteorder='little')
@@ -144,8 +147,11 @@ class MsgServer:
                 case RequestEnums.MESSAGE_TO_SERVER: # Server Registration (NOTE: BONUS)
                     print("Received print message request")
                     try:
+                        if not request_obj.payload:
+                            raise ValueError(f"Print message request must conatin data in the payload")
+                        
                         # Set parameters
-                        payload = request_obj.payload.encode()
+                        payload = request_obj.payload
                         client = self.clients.get(client_dict_key)
                         if not client:
                             raise ValueError(f"Client '{client_dict_key}' AES key not found. Please deliver AES key before sending a message.")
@@ -154,7 +160,7 @@ class MsgServer:
                             client_id = client.get('id')
                         
                         # Decrypt 'EncryptedMessage' using the AES key with the client
-                        message = EncryptedMessage.unpack(data=payload, key=client_aes_key)
+                        message = EncryptedMessage.unpack(data=payload, aes_key=client_aes_key)
                         
                         # Print the message
                         print(f"'{client_id}' |\t{message.message_content}")
@@ -179,7 +185,6 @@ class MsgServer:
         Returns:
             list[Server]: list of Server objects that were extracted from file
         """
-        servers = []
         # Acquire the lock before reading from the file
         with self.msg_file_lock:
             with open(self.msg_file, 'r') as file:

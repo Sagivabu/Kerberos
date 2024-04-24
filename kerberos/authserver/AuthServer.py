@@ -98,7 +98,7 @@ class AuthServer:
                                 self.__add_new_client_to_file(new_client)
 
                                 #send success response
-                                response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_SUCCESS.value, new_uuid).pack() #prepare response as bytes
+                                response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_SUCCESS.value, new_uuid.encode()).pack() #prepare response as bytes
                                 connection.sendall(response)
                                 
                             except Exception as e:
@@ -139,7 +139,7 @@ class AuthServer:
                                 self.__add_server_to_file(new_server)
 
                                 #send success response
-                                response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_SUCCESS.value, new_uuid).pack() #prepare response as bytes
+                                response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_SUCCESS.value, new_uuid.encode()).pack() #prepare response as bytes
                                 connection.sendall(response)
                                 
                             except Exception as e:
@@ -221,7 +221,7 @@ class AuthServer:
                             encrypted_key_iv = generate_random_iv()
                             client_key = derive_encryption_key(the_client.password_hash) # Derive client key based on the client's password_hash
                             packed_encrypted_key = EncryptedKey(iv=encrypted_key_iv,
-                                                         nonce=nonce,
+                                                         nonce=nonce.encode(),
                                                          aes_key=AES_key).pack(client_key)
                             
                             #--3-- Create 'Ticket' object
@@ -231,14 +231,14 @@ class AuthServer:
                             expiration_time = creation_time + self.ticket_expiration_time
                             packed_ticket = Ticket(server_version=self.version,
                                             client_id=the_client.id,
-                                            server_id=the_server.server_id,
+                                            server_id=the_server.server_id.encode(),
                                             creation_time=creation_time,
                                             ticket_iv=ticket_iv,
                                             aes_key=AES_key,
                                             expiration_time=expiration_time).pack(msg_server_key)
                             
                             #--4-- Prepare the SymmetricKeyResponse object
-                            SKR_response = SymmetricKeyResponse(client_id=the_client.id, encrypted_key=packed_encrypted_key, ticket=packed_ticket)
+                            SKR_response = SymmetricKeyResponse(client_id=the_client.id, encrypted_key=packed_encrypted_key, ticket=packed_ticket).pack()
                             
                             #--5-- Send response
                             response = ResponseStructure(self.version, ResponseEnums.SYMMETRIC_KEY.value, payload=SKR_response).pack() #prepare response as bytes

@@ -11,71 +11,92 @@ RESPONSE_HEADER_SIZE = 7
 REQUEST_HEADER_SIZE = 23
 
 class ResponseStructure:
-    def __init__(self, version: str, code: str, payload: Optional[str | bytes]) -> None:
+    def __init__(self, version: int, code: str, payload: Optional[bytes]) -> None:
         """
         Response format
 
         Args:
-            version (str): kerberos protocol version
+            version (int): kerberos protocol version
             code (str): Indicates the payload format which helps to decipher the payload later
-            payload (Optional[str  |  bytes]): the content to send
+            payload (bytes): the content to send
         """
          # Limit version to 1 byte
-        if not 0 <= len(version) <= 1:
-            raise ValueError("Version must be a single byte")
+        if not 0 <= version <= 255:
+            raise ValueError("Version must be a single byte (0-255)")
         self.version = version
         
         # Limit code to 2 bytes
-        if not 0 <= len(code) <= 2:
-            raise ValueError("Code must be 2 bytes or less")
+        if not len(code) == 2:
+            raise ValueError("Code must be 2 bytes")
         self.code = code
         
-        #set payload_size
-        if self.payload is None:
+        # Set payload_size
+        if payload is None:
             self.payload_size = 0
-        elif isinstance(self.payload, bytes):
-            self.payload_size = len(self.payload)
         else:
-            # If it's a string, encode it to bytes and get the length. len() return int (= 4 bytes)
-            self.payload_size = len(self.payload.encode('utf-8'))
+            self.payload_size = len(payload)  # Use length of bytes
         self.payload = payload
-        
+    
     # ---------- PACK / UNPACK ----------
     def pack(self) -> bytes:
-        ''' object method to pack the object'''
-        version_bytes = self.version.encode('utf-8')
-        code_bytes = self.code.encode('utf-8')
+        """
+        Pack the ResponseStructure object into a binary representation.
 
-        if self.payload is None:
-            payload_bytes = b''
-        elif isinstance(self.payload, bytes):
-            payload_bytes = self.payload
-        else:
-            payload_bytes = self.payload.encode('utf-8')
+        Returns:
+            bytes: Packed binary representation of the ResponseStructure object.
+        """
+        # Pack the data
+        format_string = '<B2sI'
+        packed_data = struct.pack(format_string, self.version, self.code.encode('utf-8'), self.payload_size)
+        
+        # Include payload if it exists
+        if self.payload:
+            packed_data += self.payload
+        
+        return packed_data
 
-        format_string = f'<1s2sI{len(payload_bytes)}s'
-        return struct.pack(format_string, version_bytes, code_bytes, self.payload_size, payload_bytes)
-    
     @classmethod
     def unpack(cls, data: bytes) -> 'ResponseStructure':
-        ''' class method to unpack data and creating new object \n
-            'data' - bytes object (=usually ResponseStructure object that is after 'pack' method)\n
-            return - new ResponseStructure object'''
-        format_string = '<1s2sI'
-        size_of_header = struct.calcsize(format_string)
-        header = struct.unpack(format_string, data[:size_of_header])
-        payload = data[size_of_header:]
-        return cls(header[0].decode('utf-8'), header[1].decode('utf-8'), payload.decode('utf-8'))
-    
+        """
+        Unpack binary data into a ResponseStructure object.
+
+        Args:
+            data (bytes): Binary data to unpack.
+
+        Returns:
+            ResponseStructure: Unpacked ResponseStructure object.
+        """
+        # Unpack the data
+        format_string = '<B2sI'
+        version, code_bytes, payload_size = struct.unpack(format_string, data[:7])
+        
+        # Decode the code bytes back to string
+        code = code_bytes.decode('utf-8')
+        
+        # Extract the payload
+        payload = data[7:7 + payload_size]
+
+        return cls(version, code, payload)
+
     # ---------- functions related to Specific Codes ----------
     def extract_client_id(self) -> str: # Code 1600 (Registration SUCCESS)
+        """
+        Extract and return client_id from payload
+
+        Raises:
+            ValueError: Does not contain ID (16 bytes length)
+
+        Returns:
+            str : Extracted ID
+        """
         # Validate that the payload contains exactly 16 characters
         if not self.payload or len(self.payload) != 16:
             raise ValueError("Payload must contain exactly 16 characters")
-        return self.payload
+        
+        return self.payload.decode()
         
 class RequestStructure:
-    def __init__(self, client_id: str, version: str, code: str, payload: Optional[str | bytes]) -> None:
+    def __init__(self, client_id: str, version: int, code: str, payload: Optional[bytes]) -> None:
         """
         Request format
 
@@ -83,7 +104,7 @@ class RequestStructure:
             client_id (str): sender id (usually the client)
             version (str): kerberos protocol version
             code (str): Indicates the payload format which helps to decipher the payload later
-            payload (Optional[str  |  bytes]): the content to send
+            payload (bytes): the content to send
         """
         # Validate client_id
         if len(client_id) != 16:
@@ -91,8 +112,8 @@ class RequestStructure:
         self.client_id = client_id
         
         # Limit version to 1 byte
-        if not 0 <= len(version) <= 1:
-            raise ValueError("Version must be a single byte")
+        if not 0 <= version <= 255:
+            raise ValueError("Version must be a single byte (0-255)")
         self.version = version
         
         # Limit code to 2 bytes
@@ -100,43 +121,54 @@ class RequestStructure:
             raise ValueError("Code must be 2 bytes or less")
         self.code = code
         
-        #set payload_size
-        if self.payload is None:
+        # Set payload_size
+        if payload is None:
             self.payload_size = 0
-        elif isinstance(self.payload, bytes):
-            self.payload_size = len(self.payload)
         else:
-            # If it's a string, encode it to bytes and get the length. len() return int (= 4 bytes)
-            self.payload_size = len(self.payload.encode('utf-8'))
+            self.payload_size = len(payload)  # Use length of bytes
         self.payload = payload
          
     # ---------- PACK / UNPACK ----------
     def pack(self) -> bytes:
-        ''' object method to pack the object'''
-        client_id_bytes = self.client_id.encode('utf-8')
-        version_bytes = self.version.encode('utf-8')
-        code_bytes = self.code.encode('utf-8')
+        """
+        Pack the RequestStructure object into a binary representation.
 
-        if self.payload is None:
-            payload_bytes = b''
-        elif isinstance(self.payload, bytes):
-            payload_bytes = self.payload
-        else:
-            payload_bytes = self.payload.encode('utf-8')
+        Returns:
+            bytes: Packed binary representation of the RequestStructure object.
+        """
+        # Pack the data
+        format_string = '<16sB2sI'
+        packed_data = struct.pack(format_string, self.client_id.encode('utf-8'), self.version, self.code.encode('utf-8'), self.payload_size)
+        
+        # Include payload if it exists
+        if self.payload:
+            packed_data += self.payload
+        
+        return packed_data
 
-        format_string = f'<16s1s2sI{len(payload_bytes)}s'
-        return struct.pack(format_string, client_id_bytes, version_bytes, code_bytes, self.payload_size, payload_bytes)
-    
     @classmethod
     def unpack(cls, data: bytes) -> 'RequestStructure':
-        ''' class method to unpack data and creating new object \n
-            'data' - bytes object (=usually RequestStructure object that is after 'pack' method)\n
-            return - new RequestStructure object'''
-        format_string = '<16s1s2sI'
-        size_of_header = struct.calcsize(format_string)
-        header = struct.unpack(format_string, data[:size_of_header])
-        payload = data[size_of_header:]
-        return cls(header[0].decode('utf-8'), header[1].decode('utf-8'), header[2].decode('utf-8'), payload.decode('utf-8'))
+        """
+        Unpack binary data into a RequestStructure object.
+
+        Args:
+            data (bytes): Binary data to unpack.
+
+        Returns:
+            RequestStructure: Unpacked RequestStructure object.
+        """
+        # Unpack the data
+        format_string = '<16sB2sI'
+        client_id_bytes, version, code_bytes, payload_size = struct.unpack(format_string, data[:21])
+        
+        # Decode the client_id and code bytes back to string
+        client_id = client_id_bytes.decode('utf-8')
+        code = code_bytes.decode('utf-8')
+        
+        # Extract the payload
+        payload = data[23:23 + payload_size]
+
+        return cls(client_id, version, code, payload)
     
     # ---------- functions related to Specific Codes ----------
     def extract_name_password(self) -> tuple[str, str]: # Code 1024 (Registration)
@@ -149,13 +181,16 @@ class RequestStructure:
         if not self.payload:
             raise ValueError("Payload is None")
         
+        #change payload to str
+        payload = self.payload.decode()
+        
         # Find the index of the first null terminator in the payload
-        null_index = self.payload.find('\x00')
+        null_index = payload.find('\x00')
         if null_index == -1:
             raise ValueError("Payload does not contain null terminator")
 
         # Extract the name and password from the payload
-        parts = self.payload.split('\x00') #separate by null terminated character
+        parts = payload.split('\x00') #separate by null terminated character
         if len(parts) != 2: #VALIDATION: only 2 strings should exists
             raise ValueError("Payload does not contain exactly two strings")
 
@@ -173,13 +208,16 @@ class RequestStructure:
         if not self.payload:
             raise ValueError("Payload is None")
         
+        #change payload to str
+        payload = self.payload.decode()
+        
         # Find the index of the first null terminator in the payload
-        null_index = self.payload.find('\x00')
+        null_index = payload.find('\x00')
         if null_index == -1:
             raise ValueError("Payload does not contain null terminator")
 
         # Extract the server ID and nonce from the payload
-        parts = self.payload.split('\x00')
+        parts = payload.split('\x00')
         if len(parts) != 2:
             raise ValueError("Payload does not contain exactly two parameters")
 
@@ -194,7 +232,7 @@ class RequestStructure:
 
         return server_id, nonce
     
-    def extract_server_name_symmetric_key(payload: str) -> tuple[str, str]:
+    def extract_server_name_symmetric_key(self) -> tuple[str, str]:
         """
         Extract server name and symmetric key from payload.
 
@@ -204,8 +242,11 @@ class RequestStructure:
         Returns:
             tuple[str, str]: Tuple containing server name and symmetric key.
         """
-        if not payload:
+        if not self.payload:
             raise ValueError("Payload is None")
+        
+        #change payload to str
+        payload = self.payload.decode()
         
         # Split payload by null terminator to separate server name and symmetric key
         parts = payload.split('\x00')
@@ -323,7 +364,7 @@ class Client:
         return False
 
 class Server:
-    def __init__(self, server_ip: str, server_port: int, server_name: str, server_id: str, symmetric_key: str, version: int = 1):
+    def __init__(self, server_ip: str, server_port: int, server_name: str, server_id: str, symmetric_key: str, version: int = 24):
         """
         Create a Server object.
 

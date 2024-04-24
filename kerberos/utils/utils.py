@@ -113,10 +113,10 @@ def build_reg_payload(name: str, password: str) -> str:
     # Validate the length of name and password
     if len(name) > 255:
         print("Error: Name exceeds maximum length of 255 characters.")
-        return None
+        raise ValueError("Error: Name exceeds maximum length of 255 characters.")
     if len(password) > 255:
         print("Error: Password exceeds maximum length of 255 characters.")
-        return None
+        raise ValueError("Error: Password exceeds maximum length of 255 characters.")
     
     # Add null-terminated characters at the end of name and password
     name += "\0"
