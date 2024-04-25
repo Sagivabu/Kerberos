@@ -1,9 +1,14 @@
-
+import subprocess
+import time
+from kerberos.authserver.AuthServer import AuthServer
+from kerberos.msgserver.MsgServer import MsgServer
+from kerberos.clientapp.ClientApp import ClientApp
 
 
 def main():
     try:
-        # Upload Authentication Server
+        # Upload Authentication Server in s new console
+        subprocess.Popen(['python', '"C:/git/Kerberos/kerberos/authserver/AuthServer.py"'], creationflags=subprocess.CREATE_NEW_CONSOLE)
         
         # Upload 2 Clients
             # Register both
@@ -14,6 +19,8 @@ def main():
         
         # Upload 2 Message Servers
             # Register both
+        print('hi')
+        time.sleep(25)
             
         # Monkeys tests?
         pass

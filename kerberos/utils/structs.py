@@ -5,19 +5,19 @@ from typing import Optional, List
 from datetime import datetime
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
-from utils.utils import  is_valid_port, is_valid_ip
+from kerberos.utils.utils import  is_valid_port, is_valid_ip
 
 RESPONSE_HEADER_SIZE = 7
 REQUEST_HEADER_SIZE = 23
 
 class ResponseStructure:
-    def __init__(self, version: int, code: str, payload: Optional[bytes]) -> None:
+    def __init__(self, version: int, code: int, payload: Optional[bytes]) -> None:
         """
         Response format
 
         Args:
             version (int): kerberos protocol version
-            code (str): Indicates the payload format which helps to decipher the payload later
+            code (int): Indicates the payload format which helps to decipher the payload later
             payload (bytes): the content to send
         """
          # Limit version to 1 byte
@@ -26,7 +26,7 @@ class ResponseStructure:
         self.version = version
         
         # Limit code to 2 bytes
-        if not len(code) == 2:
+        if not 0 <= code <= 65535:  # 2 bytes can represent integers from 0 to 65535
             raise ValueError("Code must be 2 bytes")
         self.code = code
         
@@ -46,8 +46,8 @@ class ResponseStructure:
             bytes: Packed binary representation of the ResponseStructure object.
         """
         # Pack the data
-        format_string = '<B2sI'
-        packed_data = struct.pack(format_string, self.version, self.code.encode('utf-8'), self.payload_size)
+        format_string = '<BHI'
+        packed_data = struct.pack(format_string, self.version, self.code, self.payload_size)
         
         # Include payload if it exists
         if self.payload:
@@ -67,11 +67,8 @@ class ResponseStructure:
             ResponseStructure: Unpacked ResponseStructure object.
         """
         # Unpack the data
-        format_string = '<B2sI'
-        version, code_bytes, payload_size = struct.unpack(format_string, data[:7])
-        
-        # Decode the code bytes back to string
-        code = code_bytes.decode('utf-8')
+        format_string = '<BHI'
+        version, code, payload_size = struct.unpack(format_string, data[:7])
         
         # Extract the payload
         payload = data[7:7 + payload_size]
@@ -96,14 +93,14 @@ class ResponseStructure:
         return self.payload.decode()
         
 class RequestStructure:
-    def __init__(self, client_id: str, version: int, code: str, payload: Optional[bytes]) -> None:
+    def __init__(self, client_id: bytes, version: int, code: int, payload: Optional[bytes]) -> None:
         """
         Request format
 
         Args:
-            client_id (str): sender id (usually the client)
+            client_id (bytes): sender id (usually the client)
             version (str): kerberos protocol version
-            code (str): Indicates the payload format which helps to decipher the payload later
+            code (int): Indicates the payload format which helps to decipher the payload later
             payload (bytes): the content to send
         """
         # Validate client_id
@@ -117,8 +114,8 @@ class RequestStructure:
         self.version = version
         
         # Limit code to 2 bytes
-        if not 0 <= len(code) <= 2:
-            raise ValueError("Code must be 2 bytes or less")
+        if not 0 <= code <= 65535:  # 2 bytes can represent integers from 0 to 65535
+            raise ValueError("Code must be 2 bytes")
         self.code = code
         
         # Set payload_size
@@ -137,8 +134,8 @@ class RequestStructure:
             bytes: Packed binary representation of the RequestStructure object.
         """
         # Pack the data
-        format_string = '<16sB2sI'
-        packed_data = struct.pack(format_string, self.client_id.encode('utf-8'), self.version, self.code.encode('utf-8'), self.payload_size)
+        format_string = '<16sBHI'
+        packed_data = struct.pack(format_string, self.client_id, self.version, self.code, self.payload_size)
         
         # Include payload if it exists
         if self.payload:
@@ -158,13 +155,9 @@ class RequestStructure:
             RequestStructure: Unpacked RequestStructure object.
         """
         # Unpack the data
-        format_string = '<16sB2sI'
-        client_id_bytes, version, code_bytes, payload_size = struct.unpack(format_string, data[:21])
-        
-        # Decode the client_id and code bytes back to string
-        client_id = client_id_bytes.decode('utf-8')
-        code = code_bytes.decode('utf-8')
-        
+        format_string = '<16sBHI'
+        client_id, version, code, payload_size = struct.unpack(format_string, data[:23])
+    
         # Extract the payload
         payload = data[23:23 + payload_size]
 
@@ -191,11 +184,12 @@ class RequestStructure:
 
         # Extract the name and password from the payload
         parts = payload.split('\x00') #separate by null terminated character
-        if len(parts) != 2: #VALIDATION: only 2 strings should exists
+        non_empty_parts = [part for part in parts if part]  # Filter out empty strings
+        if len(non_empty_parts) != 2: #VALIDATION: only 2 strings should exists
             raise ValueError("Payload does not contain exactly two strings")
 
-        name = parts[0].strip()
-        password = parts[1].strip()
+        name = non_empty_parts[0].strip()
+        password = non_empty_parts[1].strip()
         return name, password
     
     def extract_server_id_nonce(self) -> tuple[str, str]:
@@ -218,11 +212,12 @@ class RequestStructure:
 
         # Extract the server ID and nonce from the payload
         parts = payload.split('\x00')
-        if len(parts) != 2:
+        non_empty_parts = [part for part in parts if part]  # Filter out empty strings
+        if len(non_empty_parts) != 2:
             raise ValueError("Payload does not contain exactly two parameters")
 
-        server_id = parts[0]
-        nonce = parts[1]
+        server_id = non_empty_parts[0]
+        nonce = non_empty_parts[1]
 
         # Validate the lengths of the extracted parameters
         if len(server_id) != 16:
@@ -250,14 +245,15 @@ class RequestStructure:
         
         # Split payload by null terminator to separate server name and symmetric key
         parts = payload.split('\x00')
+        non_empty_parts = [part for part in parts if part]  # Filter out empty strings
 
         # Validate the number of parts
-        if len(parts) != 2:
+        if len(non_empty_parts) != 2:
             raise ValueError("Payload does not contain exactly two parameters")
 
         # Extract server name and symmetric key
-        server_name = parts[0]
-        symmetric_key = parts[1]
+        server_name = non_empty_parts[0]
+        symmetric_key = non_empty_parts[1]
 
         # Validate the length of the symmetric key
         if len(symmetric_key) != 32:
@@ -266,20 +262,20 @@ class RequestStructure:
         return server_name, symmetric_key
     
 class Client:
-    def __init__(self, id: str, name: str, password_hash: bytes, datetime_obj: datetime) -> None:
+    def __init__(self, id: bytes, name: str, password_hash: bytes, datetime_obj: datetime) -> None:
         """
         Create Client's object
 
         Args:
-            id (str): 16 bytes of id 
+            id (bytes): 16 bytes of id 
             name (str): 255 characters of name
             password_hash (bytes): SHA-256 password hash (32 bytes)
             datetime_obj (datetime.datetime): datetime object including: year, month, day, hour, minute, second
         """
          # Limit id to 16 bytes
-        if len(id) != 16:
+        if  len(id) != 16:
             raise ValueError("ID must be exactly 16 bytes")
-        self.id = id.encode('utf-8')
+        self.id = id
 
         # Limit name to 255 characters
         # Limit server_name to 255 characters
@@ -300,7 +296,7 @@ class Client:
         # Convert user_id string to bytes (UTF-8 encoding)
 
     @classmethod
-    def from_plain_password(cls, id: str, name: str, password: str, datetime_obj: datetime):
+    def from_plain_password(cls, id: bytes, name: str, password: str, datetime_obj: datetime):
         """
         Create Client's object from plain password (before hashing)
 
@@ -323,23 +319,26 @@ class Client:
         Returns:
             string: in the next format -  "ID: Name: PasswordHash: LastSeen"
         """
-        return f"{self.id}: {self.name}: {self.password_hash}: {self.lastseen.print_datetime()}"
+        password_hash = self.password_hash.hex()
+        lastseen_string = self.lastseen.print_datetime()
+        id = self.id.hex()
+        the_row = f"{id}:{self.name}:{password_hash}:{lastseen_string}"
+        return the_row
     
     @staticmethod
-    def find_client(client_list: List['Client'], client_id: str) -> Optional['Client']:
+    def find_client(client_list: List['Client'], client_id: bytes) -> Optional['Client']:
         """
         Find the client object with the given ID in the list of client objects.
 
         Args:
             client_list (List[Client]): List of Client objects
-            client_id (str): ID of the client to find
+            client_id (bytes): ID of the client to find
 
         Returns:
             Optional[Client]: The client object if found, None otherwise
         """
-        client_id_bytes = client_id.encode('utf-8')[:16]  # Limit to 16 bytes
         for client in client_list:
-            if client.id == client_id_bytes:
+            if client.id == client_id:
                 return client
         return None
 

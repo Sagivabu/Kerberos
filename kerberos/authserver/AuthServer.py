@@ -9,12 +9,12 @@ from kerberos.utils.structs import RequestStructure, ResponseStructure ,Client, 
 from kerberos.utils.encryption import generate_aes_key, generate_random_iv, derive_encryption_key
 
 
-PORT_FILE_PATH = "C:/git/Kerberos/AuthServer/port.info.txt"
-MSG_FILE_PATH = "C:/git/Kerberos/AuthServer/msg.info.txt"
-CLIENTS_FILE_PATH = "C:/git/Kerberos/AuthServer/clients.txt"
+PORT_FILE_PATH = "C:/git/Kerberos/Kerberos/AuthServer/port.info.txt"
+MSG_FILE_PATH = "C:/git/Kerberos/Kerberos/AuthServer/msg.info.txt"
+CLIENTS_FILE_PATH = "C:/git/Kerberos/Kerberos/AuthServer/clients.txt"
 
 class AuthServer:
-    def __init__(self, server_name: str = "localhost", \
+    def __init__(self, server_name: str = "127.0.0.1", \
                 server_default_port: int = 1256, \
                 server_connections: int = 10, \
                 port_file_location: str = PORT_FILE_PATH, \
@@ -45,21 +45,30 @@ class AuthServer:
         Returns:
             bytes: The complete data from the connection
         """
-        data = b''
-        while len(data) < header_size:
-            chunk = connection.recv(header_size - len(data))
-            if not chunk:
-                raise RuntimeError("Incomplete header data received.")
-            data += chunk
-        
-        # Parse header to determine payload size
-        client_id, version, code, payload_size = struct.unpack('<16s1s2sI', data)
-        payload_size = int(payload_size)
-        
-        # Receive the payload
-        data += self.__receive_all(connection, payload_size)
+        try:
+            # Receive the header first
+            header_data = b''
+            while len(header_data) < header_size:
+                chunk = connection.recv(header_size - len(header_data))
+                if not chunk:
+                    raise RuntimeError("Incomplete header data received.")
+                header_data += chunk
+            
+            # Unpack the header to determine payload size
+            client_id, version, code, payload_size = struct.unpack('<16sBHI', header_data)
+            payload_size = int(payload_size)
+            
+            # Receive the payload
+            payload_data = b''
+            while len(payload_data) < payload_size:
+                chunk = connection.recv(payload_size - len(payload_data))
+                if not chunk:
+                    raise RuntimeError("Incomplete payload data received.")
+                payload_data += chunk
 
-        return data
+            return header_data + payload_data
+        except Exception as e:
+            raise
 
     def __handle_client(self, connection: socket.socket, client_address: tuple[str, int]):
         """
@@ -91,14 +100,14 @@ class AuthServer:
                         if not self.__is_client_exist_by_name(client_name): #if client not exists in list
                             try:
                                 # Create new 'Client' object
-                                new_uuid = str(uuid.uuid4())
+                                new_uuid = bytes.fromhex(uuid.uuid4().hex)
                                 new_client = Client.from_plain_password(new_uuid, client_name, client_password, datetime.now())
                                 
                                 #add it to clients.txt file
                                 self.__add_new_client_to_file(new_client)
 
                                 #send success response
-                                response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_SUCCESS.value, new_uuid.encode()).pack() #prepare response as bytes
+                                response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_SUCCESS.value, new_uuid).pack() #prepare response as bytes
                                 connection.sendall(response)
                                 
                             except Exception as e:
@@ -124,7 +133,7 @@ class AuthServer:
                         if not self.__is_server_exist_by_name(server_name): #if server does not exists in list
                             try:
                                 # Create new 'Server' object
-                                new_uuid = str(uuid.uuid4()) #create uuid
+                                new_uuid = uuid.uuid4().hex[:16]
                                 client_ip, client_port = client_address #get the server IP and PORT
                                 new_server = Server(server_ip=client_ip,
                                                     server_port=client_port,
@@ -248,6 +257,8 @@ class AuthServer:
                     print(f"Unfamiliar request code: '{request_obj.code}'")
                     response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack()
                     connection.sendall(response)
+        except Exception as e:
+            print(e)
         finally:
             # Clean up the connection
             connection.close()
@@ -261,7 +272,8 @@ class AuthServer:
             client_obj (Client): info about client
         """
         with self.client_file_lock:
-            update_txt_file(self.clients_file, client_obj.print_as_row() + "\n")
+            to_print = client_obj.print_as_row()+"\n"
+            update_txt_file(self.clients_file, to_print)
               
     def  update_client_info(self, client_obj: Client):
         """
@@ -272,7 +284,7 @@ class AuthServer:
         """
         try:
             # Convert id, name, and password_hash to strings
-            id_str = client_obj.id.decode('utf-8')
+            id_str = client_obj.id.hex()
             name_str = client_obj.name
             password_hash_str = client_obj.password_hash.hex()
 
@@ -309,19 +321,23 @@ class AuthServer:
         Returns:
             list[Client]: list of Client objects that were extracted from file
         """
-        with self.client_file_lock: #read file with lock premit
-            content = read_txt_file(self.clients_file)
-        
-        client_list = []
-        for line in content.split('\n'):
-            if line.strip():  # Check if line is not empty
-                client_info = line.split(': ')
-                id, name, password_hash_str, date_time_str = client_info
-                password_hash = bytes.fromhex(password_hash_str)  # Convert hexadecimal string to bytes
-                date_time = datetime.strptime(date_time_str, '%Y-%m-%d %H:%M:%S')  # Parse datetime string
-                client = Client(id, name, password_hash, date_time)
-                client_list.append(client)
-        return client_list
+        try:
+            with self.client_file_lock: #read file with lock premit
+                content = read_txt_file(self.clients_file)
+            
+            client_list = []
+            for line in content.split('\n'):
+                if line.strip():  # Check if line is not empty
+                    client_info = line.split(':', 3)
+                    id_str, name, password_hash_str, date_time_str = client_info
+                    password_hash = bytes.fromhex(password_hash_str)  # Convert hexadecimal string to bytes
+                    id = bytes.fromhex(id_str)  # Convert hexadecimal string to bytes
+                    date_time = datetime.strptime(date_time_str, '%Y-%m-%d %H:%M:%S')  # Parse datetime string
+                    client = Client(id, name, password_hash, date_time)
+                    client_list.append(client)
+            return client_list
+        except Exception as e:
+            raise Exception(f"Auth server failed to read clients file.\t{e}")
 
     def __is_client_exist_by_name(self, client_name: str) -> bool:
         """
@@ -339,12 +355,12 @@ class AuthServer:
                 return True
         return False
 
-    def __is_client_exist_by_id(self, client_id: str) -> bool:
+    def __is_client_exist_by_id(self, client_id: bytes) -> bool:
         """
         Return True if client_id exists in client.txt
 
         Args:
-            client_id (str): Client's id
+            client_id (bytes): Client's id
 
         Returns:
             bool: True if exists, False otherwise
@@ -381,23 +397,26 @@ class AuthServer:
         Returns:
             list[Server]: list of Server objects that were extracted from file
         """
-        servers = []
-        # Acquire the lock before reading from the file
-        with self.server_file_lock:
-            with open(self.msg_file, 'r') as file:
-                lines = file.readlines()
-        # Release the lock as soon as the file reading is done
-        # Now we have the data and can process it without holding the lock
-        num_lines = len(lines)
-        for i in range(0, num_lines, 4):
-            ip_port = lines[i].strip().split(':')
-            server_ip = ip_port[0]
-            server_port = int(ip_port[1])
-            server_name = lines[i + 1].strip()
-            server_id = lines[i + 2].strip()
-            symmetric_key = lines[i + 3].strip()
-            servers.append(Server(server_ip, server_port, server_name, server_id, symmetric_key))
-        return servers
+        try:
+            servers = []
+            # Acquire the lock before reading from the file
+            with self.server_file_lock:
+                with open(self.msg_file, 'r') as file:
+                    lines = file.readlines()
+            # Release the lock as soon as the file reading is done
+            # Now we have the data and can process it without holding the lock
+            num_lines = len(lines)
+            for i in range(0, num_lines, 4):
+                ip_port = lines[i].strip().split(':')
+                server_ip = ip_port[0]
+                server_port = int(ip_port[1])
+                server_name = lines[i + 1].strip()
+                server_id = lines[i + 2].strip()
+                symmetric_key = lines[i + 3].strip()
+                servers.append(Server(server_ip, server_port, server_name, server_id, symmetric_key))
+            return servers
+        except Exception as e:
+            raise Exception(f"Auth server failed to read server file.\t{e}")
 
     def __is_server_exist_by_name(self, server_name: str) -> bool:
         """
@@ -504,7 +523,7 @@ class AuthServer:
         self.__ticket_expiration_time = timedelta_obj
 
     # ------- RUN SERVER ------- 
-    def run_auth_server(self):
+    def run(self):
         """
         Create a TCP/IP socket
         """
@@ -532,6 +551,14 @@ class AuthServer:
                 client_thread = threading.Thread(target=self.__handle_client, args=(connection, client_address))
                 client_thread.start()
 
+
         finally:
             # Clean up the server socket
             sock.close()
+
+
+
+# ------ RUN THE SERVER ------
+if __name__ == "__main__":
+        auth_server = AuthServer()
+        auth_server.run()

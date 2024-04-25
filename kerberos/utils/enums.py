@@ -2,17 +2,17 @@ from enum import Enum
 
 class RequestEnums(Enum): #client -> server
     #Auth server
-    CLIENT_REGISTRATION = '1024' #client registration
-    SERVER_REGISTRATION = '1025' #server registration (NOTE: BONUS)
-    SERVER_LIST = '1026' #list of all server (NOTE: BONUS)
-    SYMMETRIC_KEY = '1027' #symmetric key
+    CLIENT_REGISTRATION = 1024 #client registration
+    SERVER_REGISTRATION = 1025 #server registration (NOTE: BONUS)
+    SERVER_LIST = 1026 #list of all server (NOTE: BONUS)
+    SYMMETRIC_KEY = 1027 #symmetric key
     
     #MSG server
-    DELIVER_SYMMETRY_KEY = '1028' #deliver symmetry key to server
-    MESSAGE_TO_SERVER = '1029' #send message
+    DELIVER_SYMMETRY_KEY = 1028 #deliver symmetry key to server
+    MESSAGE_TO_SERVER = 1029 #send message
 
     @classmethod
-    def find(cls, code: str):
+    def find(cls, code: int):
         for item in cls:
             if item.value == code:
                 return item
@@ -20,21 +20,21 @@ class RequestEnums(Enum): #client -> server
     
 class ResponseEnums(Enum): #server -> client
     #Auth server
-    REGISTRATION_SUCCESS = '1600' #client registration
-    REGISTRATION_FAILED = '1601' #server registration
-    REGISTRATION_USER_EXISTS = '1611' #users already exists in DB
-    SERVER_LIST = '1602' #list of all server
-    SYMMETRIC_KEY = '1603' #symmetry key
-    SERVER_REJECT_REQUEST = '1610' # The server intentionally rejected the request
+    REGISTRATION_SUCCESS = 1600 #client registration
+    REGISTRATION_FAILED = 1601 #server registration
+    REGISTRATION_USER_EXISTS = 1611 #users already exists in DB
+    SERVER_LIST = 1602 #list of all server
+    SYMMETRIC_KEY = 1603 #symmetry key
+    SERVER_REJECT_REQUEST = 1610 # The server intentionally rejected the request
     
     #MSG server
-    SERVER_MESSAGE_ACCEPT_SYMMETRIC_KEY = '1604' #server accept the given symmetric key
-    SERVER_MESSAGE_RECIEVED_MSG_SUCCESSFULLY = '1605' #server approve that message reached its destination
-    SERVER_GENERAL_ERROR = '1609' # general error occured at the msg server
+    SERVER_MESSAGE_ACCEPT_SYMMETRIC_KEY = 1604 #server accept the given symmetric key
+    SERVER_MESSAGE_RECIEVED_MSG_SUCCESSFULLY = 1605 #server approve that message reached its destination
+    SERVER_GENERAL_ERROR = 1609 # general error occured at the msg server
 
 
     @classmethod
-    def find(cls, code: str):
+    def find(cls, code: int):
         for item in cls:
             if item.value == code:
                 return item

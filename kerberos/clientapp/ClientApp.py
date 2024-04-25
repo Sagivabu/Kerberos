@@ -2,6 +2,7 @@ import os
 import socket
 import struct
 import hashlib
+import uuid
 from datetime import datetime
 from kerberos.utils.utils import build_reg_payload, is_valid_port, generate_nonce, is_valid_ip, datetime_to_bytes
 from kerberos.utils.structs import RequestStructure, ResponseStructure, RESPONSE_HEADER_SIZE, SymmetricKeyResponse, EncryptedKey, Authenticator, ServerInList, EncryptedMessage
@@ -13,12 +14,12 @@ class ClientApp:
     def __init__(self, version: int = 24) -> None:
         self.name : str
         self.password : str
-        self.id : str
+        self.id : bytes
         self.servers_dict = {} #key: "ip:port", value: dict  ->  keys: 'id', 'aes_key', 'ticket'
-        self.__srv_file = f"{self.name}_srv.info"
-        self.__me_file = f"{self.name}_me.info"
+        self.__srv_file : str
+        self.__me_file : str
         
-        self.__salt = f"Sagiv_Abu_206122459_{self.name}".encode() #each client have its own salt for derive client key
+        self.__salt : bytes #each client have its own salt for derive client key
         self.__version = version
         
         self.startup() #XXX: NOTE: shall i put the startup here?
@@ -51,24 +52,33 @@ class ClientApp:
             header_size (int): header size
 
         Returns:
-            bytes: the complete data from the connection
+            bytes: The complete data from the connection
         """
-        data = b''
-        while len(data) < header_size:
-            chunk = connection.recv(header_size - len(data))
-            if not chunk:
-                raise RuntimeError("Incomplete header data received.")
-            data += chunk
-        
-        # Parse header to determine payload size
-        version, code, payload_size = struct.unpack('<1s2sI', data)
-        payload_size = int(payload_size)
-        
-        # Receive the payload
-        data += self.__receive_all(connection, payload_size)
+        try:
+            # Receive the header first
+            header_data = b''
+            while len(header_data) < header_size:
+                chunk = connection.recv(header_size - len(header_data))
+                if not chunk:
+                    raise RuntimeError("Incomplete header data received.")
+                header_data += chunk
+            
+            # Unpack the header to determine payload size
+            version, code, payload_size = struct.unpack('<B2sI', header_data)
+            payload_size = int(payload_size)
+            
+            # Receive the payload
+            payload_data = b''
+            while len(payload_data) < payload_size:
+                chunk = connection.recv(payload_size - len(payload_data))
+                if not chunk:
+                    raise RuntimeError("Incomplete payload data received.")
+                payload_data += chunk
 
-        return data
-
+            return header_data + payload_data
+        except Exception as e:
+            raise
+        
     def __get_auth_server_info(self)-> tuple[str,int]:
         """
         Auth server information appears in the first line of every srv.info file
@@ -86,10 +96,12 @@ class ClientApp:
                 first_line = file.readline().strip()
                 # Split the line into IP address and port
                 ip, port = first_line.split(":")
+                if not is_valid_ip(ip):
+                    raise ValueError(f"Invalid IP address format")
                 # Convert port to an integer
                 port = int(port)
                 if not is_valid_port(port):
-                    raise Exception(f"The port number '{port}' is not valid. Please provide a valid port number between 0 and 65535.")
+                    raise ValueError(f"The port number '{port}' is not valid. Please provide a valid port number between 0 and 65535.")
                 # Return the IP address and port as a tuple
                 return ip, port
         except FileNotFoundError:
@@ -114,7 +126,8 @@ class ClientApp:
             with open(self.me_file, "r") as file:
                 lines = file.readlines()
                 self.name = lines[0].strip()
-                self.id = lines[1].strip()
+                id = lines[1].strip()
+                self.id = bytes.fromhex(id)
                 
     def __is_user_exists(self) -> bool:
         """
@@ -172,7 +185,7 @@ class ClientApp:
                 raise ValueError(f"The port number '{port}' is not valid. Please provide a valid port number between 0 and 65535.")
             
             if not is_valid_ip(ip):
-                print(f"Invalid IP address format")
+                raise ValueError(f"Invalid IP address format")
             
             #check if already exists
             key = f"{ip}:{port}"
@@ -345,7 +358,7 @@ class ClientApp:
                     SymKey_response = SymmetricKeyResponse.unpack(response_obj.payload)
                     
                     #validate client id
-                    if not SymKey_response.client_id == self.id.encode():
+                    if not SymKey_response.client_id == self.id:
                         raise ValueError(f"Symmetric Key Response include incorrect client ID = '{SymKey_response.client_id}' , when my client_id is '{self.id}'")
                     
                     #decrypt EncryptedKey parameters
@@ -397,7 +410,7 @@ class ClientApp:
             authenticator = Authenticator(
                 iv=authenticator_iv,
                 version=self.version,
-                client_id=self.id.encode(),
+                client_id=self.id,
                 server_id=target_server.get('id').encode(),
                 creation_time=authenticator_creation_time
             )
@@ -584,7 +597,8 @@ class ClientApp:
         try:
             # Create the Registration Request
             reg_payload = build_reg_payload(self.name, self.password).encode()
-            request = RequestStructure(client_id="0000000000000000", #NOTE: first ID doesnt matter
+            fake_id = bytes.fromhex(uuid.uuid4().hex )
+            request = RequestStructure(client_id=fake_id, #NOTE: first ID doesnt matter
                                        version=self.version,
                                        code=RequestEnums.CLIENT_REGISTRATION.value,
                                        payload=reg_payload).pack()
@@ -613,8 +627,9 @@ class ClientApp:
                 case ResponseEnums.REGISTRATION_SUCCESS:
                     if not response_obj.payload:
                         raise ValueError(f"Registration response must contain ID as a payload")
-                    
-                    self.id = response_obj.payload.decode()
+                    if len(response_obj.payload) != 16:
+                        raise ValueError(f"Client ID that was send from Auth server must be 16 bytes long")
+                    self.id = response_obj.payload
                     print(f"Registration Process complete succefully")
                     return True
                 case ResponseEnums.REGISTRATION_FAILED:
@@ -633,15 +648,26 @@ class ClientApp:
         """ Get 'username' and 'password' from user, and register to auth_server if needed """
         # Startup server logic
         try:
-            # get name and password
+            # -- get name and password --
             self.name = input("Enter username: ")
             self.password = input("Enter password: ")
+
+            # -- set files paths --
+                # Get the directory of the current script
+            script_directory = os.path.dirname(os.path.abspath(__file__))
+
+                # Construct the full path to the file
+            self.__me_file = os.path.join(script_directory, f"{self.name}_me.info")
+            self.__srv_file = os.path.join(script_directory, f"{self.name}_srv.info")
+            self.__salt = f"Sagiv_Abu_206122459_{self.name}".encode()
             
+            # -- read user inforamtion --
             if not self.__is_user_exists():           
                 # Get Auth Server information
                 auth_server_ip, auth_server_port = self.__get_auth_server_info()
                 
-                if self.registration_request(auth_server_ip, auth_server_port): #Registration process succeed
+                # Start registration process
+                if self.registration_request(auth_server_ip, auth_server_port):
                     self.__create_info_file()
                     print("Client registration finished successfully!")
                 else:
@@ -658,3 +684,8 @@ class ClientApp:
             print(f"Name: {self.name}, ID: {self.id}")
         except Exception as e:
             print(f"Something went wrong with the startup process of client app.\t{e}")
+
+# ------ RUN THE SERVER ------
+if __name__ == "__main__":
+        client = ClientApp()
+        client.startup()
