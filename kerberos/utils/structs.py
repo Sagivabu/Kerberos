@@ -92,7 +92,7 @@ class ResponseStructure:
         
         return self.payload.decode()
         
-class RequestStructure:
+class RequestStructure: #TODO: !!! CHECK EXTRACT functions
     def __init__(self, client_id: bytes, version: int, code: int, payload: Optional[bytes]) -> None:
         """
         Request format
@@ -255,10 +255,6 @@ class RequestStructure:
         server_name = non_empty_parts[0]
         symmetric_key = non_empty_parts[1]
 
-        # Validate the length of the symmetric key
-        if len(symmetric_key) != 32:
-            raise ValueError("Symmetric key must be exactly 32 bytes")
-
         return server_name, symmetric_key
     
 class Client:
@@ -363,7 +359,7 @@ class Client:
         return False
 
 class Server:
-    def __init__(self, server_ip: str, server_port: int, server_name: str, server_id: str, symmetric_key: str, version: int = 24):
+    def __init__(self, server_ip: str, server_port: int, server_name: str, server_id: bytes, symmetric_key: bytes, version: int = 24):
         """
         Create a Server object.
 
@@ -371,8 +367,8 @@ class Server:
             server_ip (str): The server's IP address.
             server_port (int): The server's port number.
             server_name (str): The server's name.
-            server_id (str): The server's unique ID in ASCII where every 2 chars represent 8 bits in hex.
-            symmetric_key (str): The long-term symmetric key for the server in Base64 format.
+            server_id (bytes): The server's unique ID (16 bytes)
+            symmetric_key (bytes): The long-term symmetric key for the server.
         """
         # Validate server IP using is_valid_ip function
         if not is_valid_ip(server_ip):
@@ -402,22 +398,9 @@ class Server:
         # Validate version as a single byte (0-255)
         if not 0 <= version <= 255:
             raise ValueError("Version must be a single byte (0-255)")
-
-    def write_to_txt(self, file_path: str):
-        """
-        Write the server details to a text file in the specified format.
-
-        Args:
-            file_path (str): The path to the text file.
-        """
-        with open(file_path, 'w') as file:
-            file.write(f"{self.server_ip}:{self.server_port}\n")
-            file.write(f"{self.server_name}\n")
-            file.write(f"{self.server_id}\n")
-            file.write(f"{self.symmetric_key}\n")
     
     @staticmethod
-    def find_server(server_list: List['Server'], server_id: str) -> Optional['Server']:
+    def find_server(server_list: List['Server'], server_id: bytes) -> Optional['Server']:
         """
         Find the server object with the given ID in the list of server objects.
 
@@ -494,17 +477,22 @@ class ServerInList:
         Returns:
             bytes: Packed binary data.
         """
-        # Define the format string for packing the data
-        format_string = f'<16sB{len(self.name)}s4sH'
-        
-        # Pack the data into bytes
-        packed_data = struct.pack(format_string,
-                                  self.id,
-                                  len(self.name),
-                                  self.name.encode('utf-8'),
-                                  self.ip.encode('utf-8'),
-                                  self.port)
-        
+        # Define the format string for packing the fixed-length fields
+        fixed_format_string = f'<16sB4sH'
+
+        # Pack the fixed-length fields into bytes
+        packed_fixed_data = struct.pack(fixed_format_string,
+                                        self.id,
+                                        len(self.name),
+                                        self.ip.encode('utf-8'),
+                                        self.port)
+
+        # Pack the variable-length name field
+        packed_name = self.name.encode('utf-8')
+
+        # Combine the packed fixed-length data and the packed name
+        packed_data = packed_fixed_data + packed_name
+
         return packed_data
 
     @classmethod
@@ -519,17 +507,49 @@ class ServerInList:
             ServerInList: Unpacked ServerInList object.
         """
         # Define the format string for unpacking the data
-        format_string = '<16sB255s4sH'
-        
-        # Unpack the data into individual fields
-        id, name_len, name_bytes, ip_bytes, port = struct.unpack(format_string, data)
-        
-        # Decode the name and IP fields
-        name = name_bytes[:name_len].decode('utf-8')
-        ip = '.'.join(str(byte) for byte in ip_bytes)
-        
-        return cls(id, name, ip, port)
+        format_string = '<16sB4sH'
 
+        # Unpack the fixed-length fields
+        id, name_len, ip_bytes, port = struct.unpack(format_string, data[:23])
+
+        # Decode the name and IP fields
+        name = data[23:23 + name_len].decode('utf-8')
+        ip = '.'.join(str(byte) for byte in ip_bytes)
+
+        return cls(id, name, ip, port)
+    
+    @classmethod
+    def unpack_list(cls, data: bytes) -> List['ServerInList']:
+        """
+        Unpack binary data into a list of ServerInList objects.
+
+        Args:
+            data (bytes): Binary data to unpack.
+
+        Returns:
+            List[ServerInList]: List of unpacked ServerInList objects.
+        """
+        servers = []
+        index = 0
+
+        # Iterate over the data until the end is reached
+        while index < len(data):
+            # Unpack the data for a single ServerInList object
+            format_string = '<16sB4sH'
+            id, name_len, ip_bytes, port = struct.unpack(format_string, data[index:index + 23])
+
+            # Decode the name and IP fields
+            name = data[index + 23:index + 23 + name_len].decode('utf-8')
+            ip = '.'.join(str(byte) for byte in ip_bytes)
+
+            # Create a ServerInList object and append it to the list
+            server = cls(id, name, ip, port)
+            servers.append(server)
+
+            # Move the index to the next ServerInList object
+            index += 23 + name_len
+        return servers
+    
     def __str__(self):
         """Print the ServerInList object in the specified format."""
         return f"{self.name} - {self.ip}:{self.port} - {self.id.hex().upper()}"

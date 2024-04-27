@@ -1,16 +1,20 @@
 import socket
 import threading
 import struct
+import base64
+import uuid
+import os
 from datetime import datetime
 from kerberos.utils.enums import RequestEnums, ResponseEnums
 from kerberos.utils.utils import is_valid_port, is_valid_ip
-from kerberos.utils.structs import RequestStructure, ResponseStructure, Ticket, EncryptedMessage, REQUEST_HEADER_SIZE
+from kerberos.utils.structs import RequestStructure, ResponseStructure, Ticket, EncryptedMessage, REQUEST_HEADER_SIZE, RESPONSE_HEADER_SIZE
 from kerberos.utils import decryption as Dec
+from kerberos.utils import encryption as Enc
 
-MSG_FILE_PATH = "C:/git/Kerberos/msgserver/msg.info.txt"
+MSG_FILE_NAME = "msg.info.txt"
 
 class MsgServer:
-    def __init__(self, name: str, ip: str, port: int, max_connections: int = 10, version: int = 24, msg_file_location: str = MSG_FILE_PATH):
+    def __init__(self, name: str, ip: str, port: int, max_connections: int = 10, version: int = 24):
         self.name = name
         self.ip = ip 
         self.port = port
@@ -18,7 +22,10 @@ class MsgServer:
         self.__auth_key : bytes
         self.__max_connections = max_connections
         self.__version = version
-        self.__msg_file_location = msg_file_location
+        
+        # Create the file path
+        current_directory = os.path.dirname(__file__) # Get the directory of the current Python script
+        self.__msg_file_location = os.path.join(current_directory, MSG_FILE_NAME)
 
         #files locks
         self.__msg_file_lock = threading.Lock() # Define a lock to manage the threads that attend to msg.info.txt file
@@ -134,7 +141,7 @@ class MsgServer:
                         #elif TODO: need to do something with creation time?
                         else:
                             # All Good
-                            print(f"Symmetric key from client delivered successfully, connection has been set, ready to receive messages from client {ticket.client_id}.")
+                            print(f"Symmetric key from client delivered successfully, connection has been set, ready to receive messages from client {ticket.client_id.hex()}.")
                             response = ResponseStructure(self.version, ResponseEnums.SERVER_MESSAGE_ACCEPT_SYMMETRIC_KEY.value, payload=None).pack()
                             connection.sendall(response)
                         
@@ -143,8 +150,7 @@ class MsgServer:
                         response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack()
                         connection.sendall(response)
                         
-                    
-                case RequestEnums.MESSAGE_TO_SERVER: # Server Registration (NOTE: BONUS)
+                case RequestEnums.MESSAGE_TO_SERVER: # Print Message request
                     print("Received print message request")
                     try:
                         if not request_obj.payload:
@@ -175,6 +181,7 @@ class MsgServer:
                     connection.sendall(response)
         finally:
             # Clean up the connection
+            print(f"Close connection with {client_address} server.")
             connection.close()
     
     # ------- Utility functions -------
@@ -209,24 +216,184 @@ class MsgServer:
                 raise ValueError(f"Server's name must be at least 1 char and up to 255 chars")
             
             #get server id
-            self.id = lines[i + 2].strip().encode() #bytes
+            id_str = lines[i + 2].strip()
+            self.id = bytes.fromhex(id_str)
             if len(self.id) != 16:
                 raise ValueError("Server ID must be exactly 16 bytes")
             
             
-            self.__auth_key = lines[i + 3].strip().encode() #bytes
+            auth_key_str = lines[i + 3].strip()
+            self.__auth_key = base64.b64encode(auth_key_str)
             if len(self.__auth_key) != 32:
                 raise ValueError("Symmetric key must be exactly 32 bytes")
         return
 
+    def build_server_reg_payload(self) -> str:
+        """
+        Build the payload for registration process
+
+        Returns:
+            str: payload of name + auth_aes_key
+        """
+        try:
+            # Add null-terminated characters at the end of name
+            name = self.name + "\0"
+            
+            # Prepare Auth_aes_key in base64
+            auth_aes_key = base64.b64decode(self.__auth_key)
+
+            
+            # Concatenate name and auth key with null-terminated characters
+            payload = name + auth_aes_key
+            return payload
+        except Exception as e:
+            raise Exception(f"Failed to build registration request payload with name and aes_key for auth server.\t{e}")
+        
+    def register_server(self, ip: str, port: int) -> bool:
+        """ Register this server to Authentication server
+
+        Args:
+            ip (str): Authentication server's ip
+            port (int): Authentication server's port
+
+
+        Returns:
+            bool: True if registration succeed, otherwise False
+        """
+        try:
+            # Create the Registration Request
+            reg_payload = self.build_server_reg_payload().encode()
+            fake_id = bytes.fromhex((uuid.uuid4()).hex)
+            request = RequestStructure(client_id=fake_id, #NOTE: first ID doesnt matter
+                                       version=self.version,
+                                       code=RequestEnums.SERVER_REGISTRATION.value,
+                                       payload=reg_payload).pack()
+            
+            # Create a socket object
+            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            
+            # Connect to the server
+            client_socket.connect((ip, port))
+
+            # Send data to the server
+            client_socket.sendall(request)
+
+            # Receive response from the server
+            response_data = self.__receive_all(client_socket, header_size=RESPONSE_HEADER_SIZE)  # Assuming 'ResponseStructure' header size is fixed at 7 bytes
+            
+            # Close the socket
+            print(f"Close connection with Authentication server.")
+            client_socket.close()
+            
+            # Unpack the received data into a ResponseStructure object
+            response_obj = ResponseStructure.unpack(response_data)
+            
+            # Process the message based on the code
+            responseEnum_obj = ResponseEnums.find(response_obj.code)
+            match responseEnum_obj:
+                case ResponseEnums.REGISTRATION_SUCCESS:
+                    if not response_obj.payload:
+                        raise ValueError(f"Registration response must contain ID as a payload")
+                    if len(response_obj.payload) != 16:
+                        raise ValueError(f"Server ID that was send from Auth server must be 16 bytes long")
+                    self.id = response_obj.payload
+                    print(f"Registration Process complete succefully")
+                    return True
+                case ResponseEnums.REGISTRATION_FAILED:
+                    raise ValueError(f"Authentication Server returned ERROR")
+                case ResponseEnums.REGISTRATION_USER_EXISTS:
+                    raise ValueError(f"Failed to register new server. Server's name '{self.name}' already exists in DB.")
+                case _:
+                    raise ValueError(f"Unfamiliar response code: '{response_obj.code}'")
+
+        except Exception as e:
+            print(f"Registration Process failed, please try again.\t{e}")
+            return False
+        
+    def __create_info_file(self):
+        """
+        Write server information to a text file.
+
+        Args:
+            server_ip (str): The server's IP address.
+            server_port (int): The server's port number.
+            server_name (str): The server's name.
+            server_id (str): The server's unique ID.
+            server_aes_key (bytes): The server's AES key.
+            file_path (str): The path to the text file to write the information to.
+        """
+        with open(self.msg_file, 'w') as file:
+            file.write(f"{self.ip}:{self.port}\n")
+            file.write(f"{self.name}\n")
+            id_str = self.id.hex()
+            file.write(f"{id_str}\n")
+            aes_key_str = base64.b64decode(self.__auth_key)
+            file.write(f"{aes_key_str}\n")
+    
     # ------- RUN SERVER -------  
     def run_auth_server(self):
         """ Create a TCP/IP socket and run the server"""
-        # Initialize the server's parameters
-        self.__read_msg_info_file()
-        server_address = (self.ip, self.port) 
+        
+        # Register to Auth server
+        to_register = input("If you want to register a new server, please insert 'Y', otherwise it will look for msg.info.txt file to read data from")
+        
+        # Register a new server
+        if to_register == 'Y':
+            try:
+                # -- 1 -- Get Auth server info
+                auth_server_ip = input("Enter Authentication server IP: ") # Auth server IP
+                if not is_valid_ip(auth_server_ip):
+                    print(f"Invalid IP for Authentication server.")
+                    return
+                
+                auth_server_port = input("Enter Authentication server PORT: ") # Auth server port
+                if not is_valid_port(auth_server_port):
+                    print(f"Invalid Port for Authentication server.")
+                    return
+                
+                # -- 2 -- Get Server info
+                server_ip = input("Enter this server IP: ") # Get server IP
+                if not is_valid_ip(server_ip):
+                    print(f"Invalid IP for server.")
+                    return
+                else: self.ip = server_ip
+                
+                server_port = input("Enter this server PORT: ") # Get server port
+                if not is_valid_port(server_port):
+                    print(f"Invalid Port for server.")
+                    return
+                else: self.port = int(server_port)
+                
+                server_name = input("Enter this server Name: ") # Get server name
+                if not 1 <= len(server_name) <= 255:
+                    print(f"Server's name must be up to 255 chars.")
+                    return
+                else: self.name = server_name
+                
+                self.__auth_key = Enc.generate_aes_key() # Generate AES KEY
+                
+                # -- 3 -- Register the server
+                if not self.register_server(auth_server_ip, int(auth_server_port)):
+                    return
+                
+                # -- 4 -- Create msg.info.txt file
+                self.__create_info_file()
+            except Exception as e:
+                print(f"Failed to register server in Authentication server.\t{e}")
+                return
+            
+        # Read server from file
+        else:
+            try:
+                # Initialize the server's parameters
+                self.__read_msg_info_file()
+            except Exception as e:
+                print(f"Failed to read msg.info txt file: {e}")
+                return
+
 
         # Craeete and bind the socket to the port
+        server_address = (self.ip, self.port)
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         print("starting up on '%s' port '%s'" %server_address)
         sock.bind(server_address)
@@ -245,4 +412,5 @@ class MsgServer:
 
         finally:
             # Clean up the server socket
+            print(f"Server's TCP socket is closing.")
             sock.close()

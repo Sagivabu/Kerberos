@@ -1,7 +1,9 @@
+import os
 import socket
 import threading
 import uuid
 import struct
+import base64
 from datetime import datetime, timedelta
 from kerberos.utils.enums import RequestEnums, ResponseEnums
 from kerberos.utils.utils import read_port, update_txt_file, read_txt_file, is_valid_port
@@ -9,26 +11,26 @@ from kerberos.utils.structs import RequestStructure, ResponseStructure ,Client, 
 from kerberos.utils.encryption import generate_aes_key, generate_random_iv, derive_encryption_key
 
 
-PORT_FILE_PATH = "C:/git/Kerberos/Kerberos/AuthServer/port.info.txt"
-MSG_FILE_PATH = "C:/git/Kerberos/Kerberos/AuthServer/msg.info.txt"
-CLIENTS_FILE_PATH = "C:/git/Kerberos/Kerberos/AuthServer/clients.txt"
+PORT_FILE_NAME = "port.info.txt"
+MSG_FILE_NAME = "msg.info.txt"
+CLIENTS_FILE_NAME = "clients.txt"
 
 class AuthServer:
     def __init__(self, server_name: str = "127.0.0.1", \
                 server_default_port: int = 1256, \
                 server_connections: int = 10, \
-                port_file_location: str = PORT_FILE_PATH, \
-                msg_file_location: str = MSG_FILE_PATH, \
-                clients_file_location: str = CLIENTS_FILE_PATH,
                 version: int = 24):
         self.server_name = server_name 
         self.server_default_port = server_default_port
         self.__server_max_connections = server_connections
-        self.__port_file_location = port_file_location
-        self.__msg_file_location = msg_file_location
-        self.__clients_file_location = clients_file_location
         self.__ticket_expiration_time: timedelta = timedelta(hours=1)
         self.__version = version
+        
+        #files paths
+        current_directory = os.path.dirname(__file__) # Get the directory of the current Python script
+        self.__port_file_location = os.path.join(current_directory, PORT_FILE_NAME)
+        self.__msg_file_location = os.path.join(current_directory, MSG_FILE_NAME)
+        self.__clients_file_location = os.path.join(current_directory, CLIENTS_FILE_NAME)
 
         #files locks
         self.__client_file_lock = threading.Lock() # Define a lock to manage the threads that attend to clients.txt file. NOTE: the lock is per instance of the class!
@@ -100,13 +102,14 @@ class AuthServer:
                         if not self.__is_client_exist_by_name(client_name): #if client not exists in list
                             try:
                                 # Create new 'Client' object
-                                new_uuid = bytes.fromhex(uuid.uuid4().hex)
+                                new_uuid = bytes.fromhex((uuid.uuid4()).hex)
                                 new_client = Client.from_plain_password(new_uuid, client_name, client_password, datetime.now())
                                 
                                 #add it to clients.txt file
                                 self.__add_new_client_to_file(new_client)
 
                                 #send success response
+                                print(f"Client registered successfully, sending his new ID - {new_uuid.hex()}")
                                 response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_SUCCESS.value, new_uuid).pack() #prepare response as bytes
                                 connection.sendall(response)
                                 
@@ -124,7 +127,8 @@ class AuthServer:
                     print("Payload:", request_obj.payload)
                     
                     try:
-                        server_name, server_symmetric_key = request_obj.extract_server_name_symmetric_key()
+                        server_name, server_symmetric_key_str = request_obj.extract_server_name_symmetric_key()
+                        server_symmetric_key = base64.b64encode(server_symmetric_key_str)
                     except Exception as e: #if 
                         print(f"Failed to extract name and symmetric key from given payload.\t{e}")
                         response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_FAILED.value, payload=None).pack() #prepare response as bytes
@@ -133,7 +137,7 @@ class AuthServer:
                         if not self.__is_server_exist_by_name(server_name): #if server does not exists in list
                             try:
                                 # Create new 'Server' object
-                                new_uuid = uuid.uuid4().hex[:16]
+                                new_uuid = bytes.fromhex((uuid.uuid4()).hex)
                                 client_ip, client_port = client_address #get the server IP and PORT
                                 new_server = Server(server_ip=client_ip,
                                                     server_port=client_port,
@@ -148,16 +152,17 @@ class AuthServer:
                                 self.__add_server_to_file(new_server)
 
                                 #send success response
-                                response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_SUCCESS.value, new_uuid.encode()).pack() #prepare response as bytes
+                                print(f"Server registered successfully, sending his new ID - {new_uuid.hex()}")
+                                response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_SUCCESS.value, new_uuid).pack() #prepare response as bytes
                                 connection.sendall(response)
                                 
                             except Exception as e:
-                                print(f"Failed to register new server with name: '{server_name}', symmetric_key: '{server_symmetric_key}'.\n{e}")
+                                print(f"Failed to register new server with name: '{server_name}', symmetric_key: '{server_symmetric_key_str}'.\n{e}")
                                 response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_FAILED.value, None).pack() #prepare response as bytes
                                 connection.sendall(response)
                         else:
                             print(f"Failed to register new server, name '{server_name}' already exists in DB.")
-                            response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_FAILED.value, None).pack() #prepare response as bytes
+                            response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_USER_EXISTS.value, None).pack() #prepare response as bytes
                             connection.sendall(response)
 
                 case RequestEnums.SERVER_LIST: # Server List (NOTE: BONUS)
@@ -194,7 +199,8 @@ class AuthServer:
                         response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
                         connection.sendall(response)
                     try: #get request's payload
-                        server_id, nonce = request_obj.extract_server_id_nonce()
+                        server_id_str, nonce = request_obj.extract_server_id_nonce()
+                        server_id = bytes.fromhex(server_id_str)
                     except Exception as e: #if 
                         print(f"Failed to extract server_id and nonce from given payload.\t{e}")
                         response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
@@ -211,7 +217,7 @@ class AuthServer:
 
                         # If server not found return error
                         if not the_server:
-                            print(f"Failed to find required server in DB following given server_id: '{server_id}'. Server may not be exist.")
+                            print(f"Failed to find required server in DB following given server_id: '{server_id_str}'. Server may not be exist.")
                             response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
                             connection.sendall(response)
                         
@@ -235,12 +241,12 @@ class AuthServer:
                             
                             #--3-- Create 'Ticket' object
                             ticket_iv = generate_random_iv()
-                            msg_server_key = derive_encryption_key(the_server.symmetric_key.encode())
+                            msg_server_key = derive_encryption_key(the_server.symmetric_key)
                             creation_time = datetime.now()
                             expiration_time = creation_time + self.ticket_expiration_time
                             packed_ticket = Ticket(server_version=self.version,
                                             client_id=the_client.id,
-                                            server_id=the_server.server_id.encode(),
+                                            server_id=the_server.server_id,
                                             creation_time=creation_time,
                                             ticket_iv=ticket_iv,
                                             aes_key=AES_key,
@@ -261,6 +267,7 @@ class AuthServer:
             print(e)
         finally:
             # Clean up the connection
+            print(f"Close connection with {client_address}.")
             connection.close()
      
     # ------- Client handle Functions -------
@@ -381,13 +388,14 @@ class AuthServer:
         """
         try:
             # Convert Server object to string format
-            server_string = f"{server.server_ip}:{server.server_port}\n{server.server_name}\n{server.server_id}\n{server.symmetric_key}\n"
-            server_string = f"{server.server_ip}:{server.server_port}\n{server.server_name}\n{server.server_id}\n{server.symmetric_key}\n"
+            server_id = server.server_id.hex()
+            server_key = base64.b64decode(server.symmetric_key)
+            server_string = f"{server.server_ip}:{server.server_port}\n{server.server_name}\n{server_id}\n{server_key}\n"
             
             # Update the text file with the server details
             update_txt_file(self.msg_file, server_string)
         except Exception as e:
-            print(f"Failed to add server to txt file: '{self.msg_file}', with the next server details: '{server}'")
+            print(f"Failed to add server to txt file: '{self.msg_file}', with the next server details: '{server}'.\t{e}")
             raise
 
     def __read_server_file(self) -> list[Server]:
@@ -411,8 +419,10 @@ class AuthServer:
                 server_ip = ip_port[0]
                 server_port = int(ip_port[1])
                 server_name = lines[i + 1].strip()
-                server_id = lines[i + 2].strip()
-                symmetric_key = lines[i + 3].strip()
+                server_id_str = lines[i + 2].strip()
+                server_id = bytes.fromhex(server_id_str) #bytes object
+                symmetric_key_str = lines[i + 3].strip()
+                symmetric_key = base64.b64decode(symmetric_key_str) #NOTE: bytes object in format base64 (Required in project)
                 servers.append(Server(server_ip, server_port, server_name, server_id, symmetric_key))
             return servers
         except Exception as e:
@@ -472,8 +482,7 @@ class AuthServer:
         server_in_list_objects = []
         for server in servers:
             # Convert Server object to ServerInList object
-            server_id_bytes = bytes.fromhex(server.server_id)
-            server_in_list = ServerInList(server_id_bytes, server.server_name, server.server_ip, server.server_port)
+            server_in_list = ServerInList(server.server_id, server.server_name, server.server_ip, server.server_port)
             server_in_list_objects.append(server_in_list)
         
         serialized_data = b''
@@ -554,6 +563,7 @@ class AuthServer:
 
         finally:
             # Clean up the server socket
+            print(f"Authentication TCP server is closing.")
             sock.close()
 
 

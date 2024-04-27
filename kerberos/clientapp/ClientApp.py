@@ -118,7 +118,8 @@ class ClientApp:
         """ Create '{self.name}_me.info' file with name and id """
         with open(self.me_file, "w") as file:
             file.write(f"{self.name}\n")
-            file.write(f"{self.id}\n")
+            id_str = self.id.hex()
+            file.write(f"{id_str}\n")
 
     def __read_info_file(self) -> None:
         """ Read me.info file and overwrite name and id with it """
@@ -341,6 +342,7 @@ class ClientApp:
             response_data = self.__receive_all(client_socket, header_size=RESPONSE_HEADER_SIZE)  # Assuming 'ResponseStructure' header size is fixed at 7 bytes
             
             # Close the socket
+            print(f"Close connection with Authentication server.")
             client_socket.close()
             
             # Unpack the received data into a ResponseStructure object
@@ -440,6 +442,7 @@ class ClientApp:
             response_data = self.__receive_all(client_socket, header_size=RESPONSE_HEADER_SIZE)  # Assuming 'ResponseStructure' header size is fixed at 7 bytes
             
             # Close the socket
+            print(f"Close connection with {ip}:{port} server.")
             client_socket.close()
             
             # Unpack the received data into a ResponseStructure object
@@ -492,6 +495,7 @@ class ClientApp:
             response_data = self.__receive_all(client_socket, header_size=RESPONSE_HEADER_SIZE)  # Assuming 'ResponseStructure' header size is fixed at 7 bytes
             
             # Close the socket
+            print(f"Close connection with {ip}:{port} server.")
             client_socket.close()
             
             # Unpack the received data into a ResponseStructure object
@@ -536,6 +540,7 @@ class ClientApp:
             response_data = self.__receive_all(client_socket, header_size=RESPONSE_HEADER_SIZE)  # Assuming 'ResponseStructure' header size is fixed at 7 bytes
             
             # Close the socket
+            print(f"Close connection with Authentication server.")
             client_socket.close()
             
             # Unpack the received data into a ResponseStructure object
@@ -570,11 +575,7 @@ class ClientApp:
             str: string to print of all server searated on in each row
         """
         # Create list[ServerInList]
-        server_list = []
-        while data:
-            server = ServerInList.unpack(data[:279])  # 16 + 1 + 255 + 4 + 2 = 278
-            server_list.append(server)
-            data = data[279:]
+        server_list = ServerInList.unpack_list(data) #TODO: STOPPED HERE
         
         # Print the list
         result = ""
@@ -597,7 +598,7 @@ class ClientApp:
         try:
             # Create the Registration Request
             reg_payload = build_reg_payload(self.name, self.password).encode()
-            fake_id = bytes.fromhex(uuid.uuid4().hex )
+            fake_id = bytes.fromhex((uuid.uuid4()).hex)
             request = RequestStructure(client_id=fake_id, #NOTE: first ID doesnt matter
                                        version=self.version,
                                        code=RequestEnums.CLIENT_REGISTRATION.value,
@@ -616,6 +617,7 @@ class ClientApp:
             response_data = self.__receive_all(client_socket, header_size=RESPONSE_HEADER_SIZE)  # Assuming 'ResponseStructure' header size is fixed at 7 bytes
             
             # Close the socket
+            print(f"Close connection with Authentication server.")
             client_socket.close()
             
             # Unpack the received data into a ResponseStructure object
@@ -681,11 +683,22 @@ class ClientApp:
                 
             # end message
             print("Client is ready!")
-            print(f"Name: {self.name}, ID: {self.id}")
+            print(f"Name: {self.name}, ID: {self.id.hex()}")
         except Exception as e:
             print(f"Something went wrong with the startup process of client app.\t{e}")
 
 # ------ RUN THE SERVER ------
 if __name__ == "__main__":
-        client = ClientApp()
-        client.startup()
+    client = ClientApp()
+        
+    while True:
+        try:
+            user_input = input("Enter command (e.g., 'get_key server_id', 'connect ip:port', 'set_password password', 'get_servers_list', 'add_server ip:port', 'send ip:port msg', or 'register').\nEnter 'F' to finish process: ")
+            if user_input == "f":
+                print("\Finishing...")
+                break
+        except KeyboardInterrupt:
+            print("\nExiting...")
+            break
+
+        client.handle_user_input(user_input)
