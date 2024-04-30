@@ -18,7 +18,7 @@ def derive_encryption_key(based_on: bytes) -> bytes:
     Returns:
         bytes: they encryption key
     """
-    salt = b'Sagiv_Abu_206122459_Auth_Server' #salt - add uniqueness to the hashing process
+    salt = b"Sagiv_Abu_206122459" #salt - add uniqueness to the hashing process
     return hashlib.pbkdf2_hmac('sha256', based_on, salt, 100000)
 
 def generate_random_iv() -> bytes:

@@ -191,42 +191,7 @@ class RequestStructure: #TODO: !!! CHECK EXTRACT functions
         name = non_empty_parts[0].strip()
         password = non_empty_parts[1].strip()
         return name, password
-    
-    def extract_server_id_nonce(self) -> tuple[str, str]:
-        """
-        Validate it is "Symmetric key for a server" request and extract server_id and nonce from payload
-
-        Returns:
-            tuple[str, str]: return (server_id, nonce) as tuple of strings
-        """
-        if not self.payload:
-            raise ValueError("Payload is None")
-        
-        #change payload to str
-        payload = self.payload.decode()
-        
-        # Find the index of the first null terminator in the payload
-        null_index = payload.find('\x00')
-        if null_index == -1:
-            raise ValueError("Payload does not contain null terminator")
-
-        # Extract the server ID and nonce from the payload
-        parts = payload.split('\x00')
-        non_empty_parts = [part for part in parts if part]  # Filter out empty strings
-        if len(non_empty_parts) != 2:
-            raise ValueError("Payload does not contain exactly two parameters")
-
-        server_id = non_empty_parts[0]
-        nonce = non_empty_parts[1]
-
-        # Validate the lengths of the extracted parameters
-        if len(server_id) != 16:
-            raise ValueError("Server ID must be exactly 16 bytes")
-        if len(nonce) != 8:
-            raise ValueError("Nonce must be exactly 8 bytes")
-
-        return server_id, nonce
-    
+   
     def extract_server_name_symmetric_key(self) -> tuple[str, str]:
         """
         Extract server name and symmetric key from payload.
@@ -406,7 +371,7 @@ class Server:
 
         Args:
             server_list (List[Server]): List of Server objects
-            server_id (str): ID of the server to find
+            server_id (bytes): ID of the server to find
 
         Returns:
             Optional[Server]: The server object if found, None otherwise
@@ -478,45 +443,26 @@ class ServerInList:
             bytes: Packed binary data.
         """
         # Define the format string for packing the fixed-length fields
-        fixed_format_string = f'<16sB4sH'
+        fixed_format_string = f'<16sBBH'
 
         # Pack the fixed-length fields into bytes
         packed_fixed_data = struct.pack(fixed_format_string,
                                         self.id,
                                         len(self.name),
-                                        self.ip.encode('utf-8'),
+                                        len(self.ip),
                                         self.port)
 
         # Pack the variable-length name field
         packed_name = self.name.encode('utf-8')
+        
+        # Pack the variable-length ip field
+        packed_ip = self.ip.encode('utf-8')
 
         # Combine the packed fixed-length data and the packed name
-        packed_data = packed_fixed_data + packed_name
+        packed_data = packed_fixed_data + packed_name + packed_ip
 
         return packed_data
 
-    @classmethod
-    def unpack(cls, data: bytes) -> 'ServerInList':
-        """
-        Unpack binary data into a ServerInList object.
-
-        Args:
-            data (bytes): Binary data to unpack.
-
-        Returns:
-            ServerInList: Unpacked ServerInList object.
-        """
-        # Define the format string for unpacking the data
-        format_string = '<16sB4sH'
-
-        # Unpack the fixed-length fields
-        id, name_len, ip_bytes, port = struct.unpack(format_string, data[:23])
-
-        # Decode the name and IP fields
-        name = data[23:23 + name_len].decode('utf-8')
-        ip = '.'.join(str(byte) for byte in ip_bytes)
-
-        return cls(id, name, ip, port)
     
     @classmethod
     def unpack_list(cls, data: bytes) -> List['ServerInList']:
@@ -535,19 +481,20 @@ class ServerInList:
         # Iterate over the data until the end is reached
         while index < len(data):
             # Unpack the data for a single ServerInList object
-            format_string = '<16sB4sH'
-            id, name_len, ip_bytes, port = struct.unpack(format_string, data[index:index + 23])
+            format_string = '<16sBBH'
+            id, name_len, ip_len, port = struct.unpack(format_string, data[index:index + 20])
 
             # Decode the name and IP fields
-            name = data[index + 23:index + 23 + name_len].decode('utf-8')
-            ip = '.'.join(str(byte) for byte in ip_bytes)
+            name = data[index + 20:index + 20 + name_len].decode('utf-8')
+            ip = data[index + 20 + name_len:index + 20 + name_len + ip_len].decode('utf-8')
 
             # Create a ServerInList object and append it to the list
             server = cls(id, name, ip, port)
             servers.append(server)
 
             # Move the index to the next ServerInList object
-            index += 23 + name_len
+            index += 20 + name_len + ip_len
+
         return servers
     
     def __str__(self):
@@ -635,11 +582,11 @@ class EncryptedKey:
         """
         # Encrypt nonce and AES key together
         cipher = AES.new(key, AES.MODE_CBC, self.iv)
-        plaintext = self.nonce + self.aes_key
-        padded_plaintext = pad(plaintext, AES.block_size)
+        plaintext = self.nonce + self.aes_key # 40 bytes
+        padded_plaintext = pad(plaintext, AES.block_size) # 48 vytes
         encrypted_data = cipher.encrypt(padded_plaintext)
 
-        # Return IV + Encrypted data
+        # Return IV + Encrypted data (total bytes: 64)
         return self.iv + encrypted_data
 
     @classmethod
@@ -802,10 +749,10 @@ class SymmetricKeyResponse:
         """ Unpack binary data into a SymmetricKeyResponse object """
         # Unpack the client ID
         client_id = data[:16]
-        # Unpack the encrypted key
-        encrypted_key = data[16:72]
+        # Unpack the encrypted key - 16+64 = 80
+        encrypted_key = data[16:80]
         # Unpack the ticket
-        ticket = data[72:]
+        ticket = data[80:]
         
         # Create a new SymmetricKeyResponse object with the unpacked data
         return cls(client_id, encrypted_key, ticket)

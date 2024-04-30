@@ -161,6 +161,8 @@ class ClientApp:
                 with open(self.srv_file, "r") as file:
                     lines = file.readlines()
                     for line in lines:
+                        if not line.strip():
+                            continue
                         ip, port = line.strip().split(':')
                         if not is_valid_port(int(port)):
                             print(f"Found invalid server address: '{ip}:{port}', port is not valid (must be between 0 ~ 65535).")
@@ -198,13 +200,14 @@ class ClientApp:
             #update file
             if not os.path.exists(self.srv_file): #create it if not exists
                 with open(self.srv_file, "w") as file:
-                    file.write(f"{ip}:{port}\n")
+                    file.write(f"\n{ip}:{port}")
             else:
                 with open(self.srv_file, "a") as file:
-                    file.write(f"{ip}:{port}\n")
+                    file.write(f"\n{ip}:{port}")
                     
             #update dict
             self.servers_dict[key] = {}
+            print(f"Server {key} was added to client's srv.info file successfully.")
         except Exception as e:
             print(f"Failed to add server '{ip}:{port}' to '{self.name}_srv.info' file and to dictionary.\t{e}")
             return
@@ -320,8 +323,8 @@ class ClientApp:
             auth_server_ip, auth_server_port = self.__get_auth_server_info()
 
             #create the payload
-            nonce = generate_nonce()
-            payload = f"{server_id}\x00{nonce.decode('utf-8')}".encode()
+            nonce = generate_nonce().hex()
+            payload = bytes.fromhex(server_id) + bytes.fromhex(nonce)
             
             # Create the symmetric key Request
             request = RequestStructure(client_id=self.id,
@@ -371,7 +374,7 @@ class ClientApp:
                     decrypted_key = encrypted_key.aes_key
                     
                     # !!! Check if decrypted succeed !!!
-                    if nonce != decrypted_nonce:
+                    if bytes.fromhex(nonce) != decrypted_nonce:
                         raise ValueError(f"Failed to get Symmetric key to target server. origin 'nonce' != 'decrypted_nonce'.\n \
                             This may happen due to incorrect password which lead to incorrect decryption process or incorrect response (imply on a third person reponse)")
                     
@@ -661,7 +664,7 @@ class ClientApp:
                 # Construct the full path to the file
             self.__me_file = os.path.join(script_directory, f"{self.name}_me.info")
             self.__srv_file = os.path.join(script_directory, f"{self.name}_srv.info")
-            self.__salt = f"Sagiv_Abu_206122459_{self.name}".encode()
+            self.__salt = b"Sagiv_Abu_206122459" #_{self.name}
             
             # -- read user inforamtion --
             if not self.__is_user_exists():           
@@ -693,7 +696,7 @@ if __name__ == "__main__":
         
     while True:
         try:
-            user_input = input("Enter command (e.g., 'get_key server_id', 'connect ip:port', 'set_password password', 'get_servers_list', 'add_server ip:port', 'send ip:port msg', or 'register').\nEnter 'F' to finish process: ")
+            user_input = input("\nEnter command (e.g., 'get_key server_id', 'connect ip:port', 'set_password password', 'get_servers_list', 'add_server ip:port', 'send ip:port msg', or 'register').\nEnter 'F' to finish process: ")
             if user_input == "f":
                 print("\Finishing...")
                 break

@@ -199,8 +199,8 @@ class AuthServer:
                         response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
                         connection.sendall(response)
                     try: #get request's payload
-                        server_id_str, nonce = request_obj.extract_server_id_nonce()
-                        server_id = bytes.fromhex(server_id_str)
+                        server_id = request_obj.payload[:16]
+                        nonce = request_obj.payload[16:]
                     except Exception as e: #if 
                         print(f"Failed to extract server_id and nonce from given payload.\t{e}")
                         response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
@@ -217,7 +217,7 @@ class AuthServer:
 
                         # If server not found return error
                         if not the_server:
-                            print(f"Failed to find required server in DB following given server_id: '{server_id_str}'. Server may not be exist.")
+                            print(f"Failed to find required server in DB following given server_id: '{server_id.hex()}'. Server may not be exist.")
                             response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
                             connection.sendall(response)
                         
@@ -236,7 +236,7 @@ class AuthServer:
                             encrypted_key_iv = generate_random_iv()
                             client_key = derive_encryption_key(the_client.password_hash) # Derive client key based on the client's password_hash
                             packed_encrypted_key = EncryptedKey(iv=encrypted_key_iv,
-                                                         nonce=nonce.encode(),
+                                                         nonce=nonce,
                                                          aes_key=AES_key).pack(client_key)
                             
                             #--3-- Create 'Ticket' object
