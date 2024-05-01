@@ -124,11 +124,9 @@ class AuthServer:
                     
                 case RequestEnums.SERVER_REGISTRATION: # Server Registration (NOTE: BONUS)
                     print("Received server registration request:")
-                    print("Payload:", request_obj.payload)
                     
                     try:
-                        server_name, server_symmetric_key_str = request_obj.extract_server_name_symmetric_key()
-                        server_symmetric_key = base64.b64encode(server_symmetric_key_str)
+                        server_name, server_symmetric_key = request_obj.extract_server_name_symmetric_key()
                     except Exception as e: #if 
                         print(f"Failed to extract name and symmetric key from given payload.\t{e}")
                         response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_FAILED.value, payload=None).pack() #prepare response as bytes
@@ -186,7 +184,6 @@ class AuthServer:
 
                 case RequestEnums.SYMMETRIC_KEY: # Symmetric key to connect a server
                     print("Received Symmetric key to a server request:")
-                    print("Payload:", request_obj.payload)
                     
                     try:
                         #check if client registered
@@ -389,8 +386,8 @@ class AuthServer:
         try:
             # Convert Server object to string format
             server_id = server.server_id.hex()
-            server_key = base64.b64decode(server.symmetric_key)
-            server_string = f"{server.server_ip}:{server.server_port}\n{server.server_name}\n{server_id}\n{server_key}\n"
+            server_key = base64.b64encode(server.symmetric_key).decode('utf-8')
+            server_string = f"\n{server.server_ip}:{server.server_port}\n{server.server_name}\n{server_id}\n{server_key}"
             
             # Update the text file with the server details
             update_txt_file(self.msg_file, server_string)
@@ -413,15 +410,24 @@ class AuthServer:
                     lines = file.readlines()
             # Release the lock as soon as the file reading is done
             # Now we have the data and can process it without holding the lock
-            num_lines = len(lines)
+            
+            #create list without empty lines
+            new_lines = []
+            for line in lines:
+                if not line.strip(): #if empty line
+                    continue
+                else:
+                    new_lines.append(line) #line has data
+                    
+            num_lines = len(new_lines)
             for i in range(0, num_lines, 4):
-                ip_port = lines[i].strip().split(':')
+                ip_port = new_lines[i].strip().split(':')
                 server_ip = ip_port[0]
                 server_port = int(ip_port[1])
-                server_name = lines[i + 1].strip()
-                server_id_str = lines[i + 2].strip()
+                server_name = new_lines[i + 1].strip()
+                server_id_str = new_lines[i + 2].strip()
                 server_id = bytes.fromhex(server_id_str) #bytes object
-                symmetric_key_str = lines[i + 3].strip()
+                symmetric_key_str = new_lines[i + 3].strip()
                 symmetric_key = base64.b64decode(symmetric_key_str) #NOTE: bytes object in format base64 (Required in project)
                 servers.append(Server(server_ip, server_port, server_name, server_id, symmetric_key))
             return servers

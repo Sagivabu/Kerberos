@@ -4,7 +4,7 @@ import struct
 import hashlib
 import uuid
 from datetime import datetime
-from kerberos.utils.utils import build_reg_payload, is_valid_port, generate_nonce, is_valid_ip, datetime_to_bytes
+from kerberos.utils.utils import build_reg_payload, is_valid_port, is_valid_ip, datetime_to_bytes
 from kerberos.utils.structs import RequestStructure, ResponseStructure, RESPONSE_HEADER_SIZE, SymmetricKeyResponse, EncryptedKey, Authenticator, ServerInList, EncryptedMessage
 from kerberos.utils.enums import RequestEnums, ResponseEnums
 from kerberos.utils import decryption as Dec
@@ -323,7 +323,7 @@ class ClientApp:
             auth_server_ip, auth_server_port = self.__get_auth_server_info()
 
             #create the payload
-            nonce = generate_nonce().hex()
+            nonce = Enc.generate_nonce().hex()
             payload = bytes.fromhex(server_id) + bytes.fromhex(nonce)
             
             # Create the symmetric key Request

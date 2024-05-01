@@ -192,24 +192,21 @@ class RequestStructure: #TODO: !!! CHECK EXTRACT functions
         password = non_empty_parts[1].strip()
         return name, password
    
-    def extract_server_name_symmetric_key(self) -> tuple[str, str]:
+    def extract_server_name_symmetric_key(self) -> tuple[str, bytes]:
         """
         Extract server name and symmetric key from payload.
 
         Args:
-            payload (str): Payload string containing server name and symmetric key.
+            payload (bytes): Payload containing server name and symmetric key.
 
         Returns:
-            tuple[str, str]: Tuple containing server name and symmetric key.
+            tuple[str, bytes]: Tuple containing server name and symmetric key.
         """
         if not self.payload:
             raise ValueError("Payload is None")
-        
-        #change payload to str
-        payload = self.payload.decode()
-        
-        # Split payload by null terminator to separate server name and symmetric key
-        parts = payload.split('\x00')
+
+        # Split into two separate bytes objects
+        parts = self.payload.split(b'\x00')
         non_empty_parts = [part for part in parts if part]  # Filter out empty strings
 
         # Validate the number of parts
@@ -217,7 +214,7 @@ class RequestStructure: #TODO: !!! CHECK EXTRACT functions
             raise ValueError("Payload does not contain exactly two parameters")
 
         # Extract server name and symmetric key
-        server_name = non_empty_parts[0]
+        server_name = non_empty_parts[0].decode()
         symmetric_key = non_empty_parts[1]
 
         return server_name, symmetric_key

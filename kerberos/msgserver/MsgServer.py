@@ -14,10 +14,10 @@ from kerberos.utils import encryption as Enc
 MSG_FILE_NAME = "msg.info.txt"
 
 class MsgServer:
-    def __init__(self, name: str, ip: str, port: int, max_connections: int = 10, version: int = 24):
-        self.name = name
-        self.ip = ip 
-        self.port = port
+    def __init__(self, max_connections: int = 10, version: int = 24):
+        self.name : str
+        self.ip : str
+        self.port : int
         self.id : bytes 
         self.__auth_key : bytes
         self.__max_connections = max_connections
@@ -50,7 +50,43 @@ class MsgServer:
     def msg_file_lock(self):
         return self.__msg_file_lock
     
-    def __receive_all(self, connection: socket.socket, header_size: int) -> bytes:
+    def __receive_all_response(self, connection: socket.socket, header_size: int) ->bytes:
+        """
+        Helper function to receive all data from a socket connection matching the format of 'ResponseStructure'.
+
+        Args:
+            connection (socket.socket): opened connection
+            header_size (int): header size
+
+        Returns:
+            bytes: The complete data from the connection
+        """
+        try:
+            # Receive the header first
+            header_data = b''
+            while len(header_data) < header_size:
+                chunk = connection.recv(header_size - len(header_data))
+                if not chunk:
+                    raise RuntimeError("Incomplete header data received.")
+                header_data += chunk
+            
+            # Unpack the header to determine payload size
+            version, code, payload_size = struct.unpack('<B2sI', header_data)
+            payload_size = int(payload_size)
+            
+            # Receive the payload
+            payload_data = b''
+            while len(payload_data) < payload_size:
+                chunk = connection.recv(payload_size - len(payload_data))
+                if not chunk:
+                    raise RuntimeError("Incomplete payload data received.")
+                payload_data += chunk
+
+            return header_data + payload_data
+        except Exception as e:
+            raise
+
+    def __receive_all_request(self, connection: socket.socket, header_size: int) -> bytes:
         """
         Helper function to receive all data from a socket connection matching the format of 'RequestStructure'.
 
@@ -61,21 +97,30 @@ class MsgServer:
         Returns:
             bytes: The complete data from the connection
         """
-        data = b''
-        while len(data) < header_size:
-            chunk = connection.recv(header_size - len(data))
-            if not chunk:
-                raise RuntimeError("Incomplete header data received.")
-            data += chunk
-        
-        # Parse header to determine payload size
-        client_id, version, code, payload_size = struct.unpack('<16s1s2sI', data)
-        payload_size = int(payload_size)
-        
-        # Receive the payload
-        data += self.__receive_all(connection, payload_size)
+        try:
+            # Receive the header first
+            header_data = b''
+            while len(header_data) < header_size:
+                chunk = connection.recv(header_size - len(header_data))
+                if not chunk:
+                    raise RuntimeError("Incomplete header data received.")
+                header_data += chunk
+            
+            # Unpack the header to determine payload size
+            client_id, version, code, payload_size = struct.unpack('<16sBHI', header_data)
+            payload_size = int(payload_size)
+            
+            # Receive the payload
+            payload_data = b''
+            while len(payload_data) < payload_size:
+                chunk = connection.recv(payload_size - len(payload_data))
+                if not chunk:
+                    raise RuntimeError("Incomplete payload data received.")
+                payload_data += chunk
 
-        return data
+            return header_data + payload_data
+        except Exception as e:
+            raise
 
     def __handle_client(self, connection: socket.socket, client_address: tuple[str, int]):
         """
@@ -90,7 +135,7 @@ class MsgServer:
             client_dict_key = f'{ip}:{port}'
             
             # Receive the message
-            data = self.__receive_all(connection, header_size=REQUEST_HEADER_SIZE)  # Assuming 'RequestStructure' header size is fixed at 23 bytes
+            data = self.__receive_all_request(connection, header_size=REQUEST_HEADER_SIZE)  # Assuming 'RequestStructure' header size is fixed at 23 bytes
 
             # Unpack the received data into a RequestStructure object
             request_obj = RequestStructure.unpack(data)
@@ -198,53 +243,49 @@ class MsgServer:
                 lines = file.readlines()
         # Release the lock as soon as the file reading is done
         # Now we have the data and can process it without holding the lock
+        
+        #validate msg.info format
         num_lines = len(lines)
-        for i in range(0, num_lines, 4):
+        if num_lines != 4:
+            raise ValueError(f"File is not in the accepted format:\nip:port\nserver_name\nserver_id\naes_key_to_auth_server\n")
             
-            #get ip, port and validate
-            ip_port = lines[i].strip().split(':')
-            self.ip = ip_port[0]
-            self.port = int(ip_port[1])
-            if not is_valid_ip(self.ip):
-                raise ValueError(f"Invalid IP address format")
-            if not is_valid_port(self.port):
-                raise ValueError(f"The port number '{self.port}' is not valid. Please provide a valid port number between 0 and 65535.")
-            
-            #get server name
-            self.name = lines[i + 1].strip()
-            if not 1 <= len(self.name) <= 255:
-                raise ValueError(f"Server's name must be at least 1 char and up to 255 chars")
-            
-            #get server id
-            id_str = lines[i + 2].strip()
-            self.id = bytes.fromhex(id_str)
-            if len(self.id) != 16:
-                raise ValueError("Server ID must be exactly 16 bytes")
-            
-            
-            auth_key_str = lines[i + 3].strip()
-            self.__auth_key = base64.b64encode(auth_key_str)
-            if len(self.__auth_key) != 32:
-                raise ValueError("Symmetric key must be exactly 32 bytes")
+        #get ip, port and validate
+        ip_port = lines[0].strip().split(':')
+        self.ip = ip_port[0]
+        self.port = int(ip_port[1])
+        if not is_valid_ip(self.ip):
+            raise ValueError(f"Invalid IP address format")
+        if not is_valid_port(self.port):
+            raise ValueError(f"The port number '{self.port}' is not valid. Please provide a valid port number between 0 and 65535.")
+        
+        #get server name
+        self.name = lines[1].strip()
+        if not 1 <= len(self.name) <= 255:
+            raise ValueError(f"Server's name must be at least 1 char and up to 255 chars")
+        
+        #get server id
+        id_str = lines[2].strip()
+        self.id = bytes.fromhex(id_str)
+        if len(self.id) != 16:
+            raise ValueError("Server ID must be exactly 16 bytes")
+        
+        
+        auth_key_str = lines[3].strip()
+        self.__auth_key = base64.b64decode(auth_key_str)
+        if len(self.__auth_key) != 32:
+            raise ValueError("Symmetric key must be exactly 32 bytes")
         return
 
-    def build_server_reg_payload(self) -> str:
+    def build_server_reg_payload(self) -> bytes:
         """
         Build the payload for registration process
 
         Returns:
-            str: payload of name + auth_aes_key
+            bytes: payload = name + \x00 + auth_aes_key
         """
         try:
-            # Add null-terminated characters at the end of name
-            name = self.name + "\0"
-            
-            # Prepare Auth_aes_key in base64
-            auth_aes_key = base64.b64decode(self.__auth_key)
-
-            
             # Concatenate name and auth key with null-terminated characters
-            payload = name + auth_aes_key
+            payload = self.name.encode() + b'\x00' + self.__auth_key
             return payload
         except Exception as e:
             raise Exception(f"Failed to build registration request payload with name and aes_key for auth server.\t{e}")
@@ -262,7 +303,7 @@ class MsgServer:
         """
         try:
             # Create the Registration Request
-            reg_payload = self.build_server_reg_payload().encode()
+            reg_payload = self.build_server_reg_payload()
             fake_id = bytes.fromhex((uuid.uuid4()).hex)
             request = RequestStructure(client_id=fake_id, #NOTE: first ID doesnt matter
                                        version=self.version,
@@ -272,6 +313,9 @@ class MsgServer:
             # Create a socket object
             client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             
+            # Bind the client socket to the desired port
+            client_socket.bind(('0.0.0.0', self.port))
+            
             # Connect to the server
             client_socket.connect((ip, port))
 
@@ -279,11 +323,7 @@ class MsgServer:
             client_socket.sendall(request)
 
             # Receive response from the server
-            response_data = self.__receive_all(client_socket, header_size=RESPONSE_HEADER_SIZE)  # Assuming 'ResponseStructure' header size is fixed at 7 bytes
-            
-            # Close the socket
-            print(f"Close connection with Authentication server.")
-            client_socket.close()
+            response_data = self.__receive_all_response(client_socket, header_size=RESPONSE_HEADER_SIZE)  # Assuming 'ResponseStructure' header size is fixed at 7 bytes
             
             # Unpack the received data into a ResponseStructure object
             response_obj = ResponseStructure.unpack(response_data)
@@ -327,26 +367,26 @@ class MsgServer:
             file.write(f"{self.name}\n")
             id_str = self.id.hex()
             file.write(f"{id_str}\n")
-            aes_key_str = base64.b64decode(self.__auth_key)
-            file.write(f"{aes_key_str}\n")
+            aes_key_base64 = base64.b64encode(self.__auth_key).decode('utf-8')
+            file.write(f"{aes_key_base64}\n")
     
     # ------- RUN SERVER -------  
-    def run_auth_server(self):
+    def run(self):
         """ Create a TCP/IP socket and run the server"""
         
-        # Register to Auth server
-        to_register = input("If you want to register a new server, please insert 'Y', otherwise it will look for msg.info.txt file to read data from")
+        # Register to Msg server
+        to_register = input("If you want to register a new server, please insert 'Y', otherwise it will look for msg.info.txt file to read data from: ")
         
         # Register a new server
-        if to_register == 'Y':
+        if to_register in ['Y','y']:
             try:
-                # -- 1 -- Get Auth server info
-                auth_server_ip = input("Enter Authentication server IP: ") # Auth server IP
+                # -- 1 -- Get Msg server info
+                auth_server_ip = input("Enter Authentication server IP: ") # Authentication server IP
                 if not is_valid_ip(auth_server_ip):
                     print(f"Invalid IP for Authentication server.")
                     return
                 
-                auth_server_port = input("Enter Authentication server PORT: ") # Auth server port
+                auth_server_port = input("Enter Authentication server PORT: ") # Authentication server port
                 if not is_valid_port(auth_server_port):
                     print(f"Invalid Port for Authentication server.")
                     return
@@ -379,7 +419,7 @@ class MsgServer:
                 # -- 4 -- Create msg.info.txt file
                 self.__create_info_file()
             except Exception as e:
-                print(f"Failed to register server in Authentication server.\t{e}")
+                print(f"Failed to register server in Message server.\t{e}")
                 return
             
         # Read server from file
@@ -414,3 +454,9 @@ class MsgServer:
             # Clean up the server socket
             print(f"Server's TCP socket is closing.")
             sock.close()
+            
+            
+# ------ RUN THE SERVER ------
+if __name__ == "__main__":
+    msg_server = MsgServer()
+    msg_server.run()

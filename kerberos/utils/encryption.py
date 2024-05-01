@@ -1,4 +1,5 @@
 import os
+import secrets
 import hashlib
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
@@ -32,7 +33,11 @@ def generate_random_iv() -> bytes:
 
 def generate_aes_key() -> bytes:
     """Generate a random AES key of 32 bytes"""
-    return os.urandom(32)
+    return secrets.token_bytes(32)
+
+def generate_nonce() -> bytes:
+    """Generate a random 8-byte nonce."""
+    return secrets.token_bytes(8)
 
 # ---------- Authenticator ----------
 def encrypt_authenticator(authenticator: Authenticator, client_key: bytes) -> bytes:
