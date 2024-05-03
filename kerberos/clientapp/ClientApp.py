@@ -3,9 +3,10 @@ import socket
 import struct
 import hashlib
 import uuid
+from typing import Dict
 from datetime import datetime
 from kerberos.utils.utils import build_reg_payload, is_valid_port, is_valid_ip, datetime_to_bytes
-from kerberos.utils.structs import RequestStructure, ResponseStructure, RESPONSE_HEADER_SIZE, SymmetricKeyResponse, EncryptedKey, Authenticator, ServerInList, EncryptedMessage
+from kerberos.utils.structs import RequestStructure, ResponseStructure, RESPONSE_HEADER_SIZE, SymmetricKeyResponse, EncryptedKey, Authenticator, ServerInList, EncryptedMessage, Ticket
 from kerberos.utils.enums import RequestEnums, ResponseEnums
 from kerberos.utils import decryption as Dec
 from kerberos.utils import encryption as Enc
@@ -14,8 +15,10 @@ class ClientApp:
     def __init__(self, version: int = 24) -> None:
         self.name : str
         self.password : str
-        self.id : bytes
-        self.servers_dict = {} #key: "ip:port", value: dict  ->  keys: 'id', 'aes_key', 'ticket'
+        self.id : bytes 
+        self.servers_dict: Dict[str, dict] = { #key: "ip:port", value: dict  ->  keys: 'id', 'aes_key', 'ticket'
+            'ip:port': {'socket': socket.socket(), 'id': b'bytes_data', 'key': b'bytes_data', 'ticket': b'bytes_data'}
+        }
         self.__srv_file : str
         self.__me_file : str
         
@@ -261,7 +264,29 @@ class ClientApp:
                 self.connect_server(ip, port)
             except Exception as e:
                 print(f"Failed to connect to the server '{ip}:{port}'.\t{e}")
-                
+
+        # ---- DISCONNECT MSG SERVER ----
+        elif len(parts) >= 2 and parts[0].lower() == "disconnect":
+            try:
+                # Extract IP and port
+                ip_port = parts[1].split(":")
+                if len(ip_port) != 2:
+                    print("Invalid format. Please use 'disconnect ip:port'.")
+                    return
+                #validate ip
+                ip = ip_port[0]
+                if not is_valid_ip(ip):
+                    print(f"Invalid IP address format")
+                    return
+                #validate port
+                port = int(ip_port[1])
+                if not is_valid_port(port):
+                    print(f"The port number '{port}' is not valid. Please provide a valid port number between 0 and 65535.")
+                    return
+                self.disconnect_server(ip, port)
+            except Exception as e:
+                print(f"Failed to disconnect to the server '{ip}:{port}'.\t{e}")
+
         # ---- SET PASSWORD ----
         elif len(parts) >= 2 and parts[0].lower() == "set_password":
             new_password = ' '.join(parts[1:])
@@ -308,7 +333,7 @@ class ClientApp:
         elif len(parts) >= 1 and parts[0].lower() == "register":
             self.startup()
         else:
-            print("Invalid command. Please use 'connect ip:port', 'set_password password', 'get_servers_list', 'add_server ip:port', 'send ip:port msg', or 'register'.")
+            print("Invalid command. Please use 'get_key ip:port server_id', 'connect ip:port', 'set_password password', 'get_servers_list', 'add_server ip:port', 'send ip:port msg', or 'register'.")
 
     # symmetric key request
     def get_sym_key(self, ip: str, port: int, server_id: str) -> None:
@@ -383,7 +408,7 @@ class ClientApp:
                         key = f"{ip}:{port}"
                         if key not in self.servers_dict:
                              self.servers_dict[key] = {}
-                        self.servers_dict[key]['id'] = server_id # (str)
+                        self.servers_dict[key]['id'] = bytes.fromhex(server_id) # (16 bytes)
                         self.servers_dict[key]['key'] = decrypted_key #symmetric key shard with the server (32 bytes)
                         self.servers_dict[key]['ticket'] = SymKey_response.ticket #Ticket encrypted (bytes)
                         
@@ -404,8 +429,21 @@ class ClientApp:
             # Get target server info
             key = f"{ip}:{port}"
             target_server = self.servers_dict.get(key)
-            if target_server is None or not target_server:
+            if not target_server:
                 raise ValueError(f"Server {key} is not exists in Client's DB, please use 'get_key' command before")
+            
+            # Validations
+            server_id = target_server.get('id')
+            if not isinstance(server_id, bytes):
+                raise ValueError(f"Server {key}'s ID is not a bytes object")
+            
+            server_ticket = target_server.get('ticket')
+            if not isinstance(server_ticket, bytes):
+                raise ValueError(f"Server {key}'s Ticket is not a bytes object")
+            
+            server_key = target_server.get('key')
+            if not isinstance(server_key, bytes):
+                raise ValueError(f"Server {key}'s Key is not a bytes object")
 
             # Create IV for encryption
             authenticator_iv = Enc.generate_random_iv()
@@ -416,37 +454,33 @@ class ClientApp:
                 iv=authenticator_iv,
                 version=self.version,
                 client_id=self.id,
-                server_id=target_server.get('id').encode(),
+                server_id=server_id,
                 creation_time=authenticator_creation_time
             )
             
             #ecnrypt it
-            encrypted_auth = Enc.encrypt_authenticator(authenticator=authenticator, client_key=target_server.get('key'))
+            encrypted_auth = Enc.encrypt_authenticator(authenticator=authenticator, client_key=server_key)
             
             #prepare the request
             authenticator_length = len(encrypted_auth).to_bytes(4, byteorder='little')
-            ticket = target_server.get('ticket')
-            payload = authenticator_length + encrypted_auth + ticket
+            payload = authenticator_length + encrypted_auth + server_ticket
             request = RequestStructure(client_id=self.id,
                                        version=self.version,
                                        code=RequestEnums.DELIVER_SYMMETRY_KEY.value,
                                        payload=payload).pack()
 
             # Create a socket object
-            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            target_server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            target_server['socket'] = target_server_socket
             
             # Connect to target server
-            client_socket.connect((ip, port))
+            target_server_socket.connect((ip, port))
             
             # Send data to the server
-            client_socket.sendall(request)
+            target_server_socket.sendall(request)
 
             # Receive response from the server
-            response_data = self.__receive_all(client_socket, header_size=RESPONSE_HEADER_SIZE)  # Assuming 'ResponseStructure' header size is fixed at 7 bytes
-            
-            # Close the socket
-            print(f"Close connection with {ip}:{port} server.")
-            client_socket.close()
+            response_data = self.__receive_all(target_server_socket, header_size=RESPONSE_HEADER_SIZE)  # Assuming 'ResponseStructure' header size is fixed at 7 bytes
             
             # Unpack the received data into a ResponseStructure object
             response_obj = ResponseStructure.unpack(response_data)
@@ -455,7 +489,7 @@ class ClientApp:
             responseEnum_obj = ResponseEnums.find(response_obj.code)
             match responseEnum_obj:
                 case ResponseEnums.SERVER_MESSAGE_ACCEPT_SYMMETRIC_KEY:
-                    print(f"Server '{key}' received Symmetric key successfully") #TODO: something to do here?
+                    print(f"Server '{key}' received Symmetric key successfully. Connection to the server is ready for use.") #TODO: something to do here?
                 case ResponseEnums.SERVER_GENERAL_ERROR:
                     print(f"Server '{key}' failed to receive Symmetric Key.")
                 case _:
@@ -463,21 +497,61 @@ class ClientApp:
 
         except Exception as e:
             print(f"Failed to connect the server '{key}'.\t{e}")
-        
+
+    # Close connection to server if exists
+    def disconnect_server(self, ip: str, port: int) -> None:
+        try:
+            # Get target server info
+            key = f"{ip}:{port}"
+            target_server = self.servers_dict.get(key)
+            if not target_server:
+                raise ValueError(f"Server {key} is not exists in Client's DB, hence no connection exists")
+            
+            # Get the socket to the server
+            target_server_socket = target_server.get('socket')
+            if not target_server_socket:
+                raise ValueError(f"Not connected to server '{key}'")
+            if not isinstance(target_server_socket, socket.socket):
+                raise ValueError(f"Server {key}'s socket is not a socket object")
+            
+            target_server_socket.close()
+
+        except Exception as e:
+            print(f"Failed to disconnect the server '{key}'.\t{e}")
     # Send message
     def send_msg(self, ip: str, port: int, msg: str):
         try:
             # Get target server info
             key = f"{ip}:{port}"
             target_server = self.servers_dict.get(key)
-            if target_server is None or not target_server:
-                raise ValueError(f"Server {key} is not exists in Client's DB, please use 'get_key' command before")
-
+            if not target_server:
+                raise ValueError(f"Server {key} is not exists in Client's DB, Please use 'get_key' command before")
+            
+            # Validations
+            server_id = target_server.get('id')
+            if not isinstance(server_id, bytes):
+                raise ValueError(f"Server {key}'s ID is not a bytes object")
+            
+            server_ticket = target_server.get('ticket')
+            if not isinstance(server_ticket, bytes):
+                raise ValueError(f"Server {key}'s Ticket is not a bytes object")
+            
+            server_key = target_server.get('key')
+            if not isinstance(server_key, bytes):
+                raise ValueError(f"Server {key}'s Key is not a bytes object")
+            
+            # Get the socket to the server
+            target_server_socket = target_server.get('socket')
+            if not target_server_socket:
+                raise ValueError(f"Not connected to server '{key}'. Please use 'connect' command before")
+            if not isinstance(target_server_socket, socket.socket):
+                raise ValueError(f"Server {key}'s socket is not a socket object")
+            
             # Create IV for encryption
             message_iv = Enc.generate_random_iv()
             
             # Create the payload (the EncryptedMessage)
-            payload = EncryptedMessage(message_iv, msg).pack(aes_key=target_server.get('key'))
+            payload = EncryptedMessage(message_iv, msg).pack(aes_key=server_key)
             
             #prepare the request
             request = RequestStructure(client_id=self.id,
@@ -485,21 +559,11 @@ class ClientApp:
                                        code=RequestEnums.MESSAGE_TO_SERVER.value,
                                        payload=payload).pack()
 
-            # Create a socket object
-            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            
-            # Connect to target server
-            client_socket.connect((ip, port))
-            
             # Send data to the server
-            client_socket.sendall(request)
+            target_server_socket.sendall(request)
 
             # Receive response from the server
-            response_data = self.__receive_all(client_socket, header_size=RESPONSE_HEADER_SIZE)  # Assuming 'ResponseStructure' header size is fixed at 7 bytes
-            
-            # Close the socket
-            print(f"Close connection with {ip}:{port} server.")
-            client_socket.close()
+            response_data = self.__receive_all(target_server_socket, header_size=RESPONSE_HEADER_SIZE)  # Assuming 'ResponseStructure' header size is fixed at 7 bytes
             
             # Unpack the received data into a ResponseStructure object
             response_obj = ResponseStructure.unpack(response_data)
@@ -515,7 +579,7 @@ class ClientApp:
                     print(f"Unfamiliar response code: '{response_obj.code}'.")
 
         except Exception as e:
-            print(f"Failed to connect the server '{key}'.\t{e}")
+            print(f"Failed to send message to the server '{key}'.\t{e}")
     
     # get servers list
     def get_servers_list(self) -> None:
@@ -578,7 +642,7 @@ class ClientApp:
             str: string to print of all server searated on in each row
         """
         # Create list[ServerInList]
-        server_list = ServerInList.unpack_list(data) #TODO: STOPPED HERE
+        server_list = ServerInList.unpack_list(data)
         
         # Print the list
         result = ""
@@ -696,9 +760,18 @@ if __name__ == "__main__":
         
     while True:
         try:
-            user_input = input("\nEnter command (e.g., 'get_key server_id', 'connect ip:port', 'set_password password', 'get_servers_list', 'add_server ip:port', 'send ip:port msg', or 'register').\nEnter 'F' to finish process: ")
-            if user_input == "f":
-                print("\Finishing...")
+            user_input = input("\nEnter command from list:\
+                               \n'get_key ip:port server_id'\
+                               \n'connect ip:port'\
+                               \n'disconnect ip:port\
+                               \n'set_password password'\
+                               \n 'get_servers_list'\
+                               \n'add_server ip:port'\
+                               \n'send ip:port msg'\
+                               \n'register'\
+                               \nEnter 'F' to finish process: ")
+            if user_input in ['f','F']:
+                print("\nFinishing...")
                 break
         except KeyboardInterrupt:
             print("\nExiting...")

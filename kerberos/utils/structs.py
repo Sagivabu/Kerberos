@@ -662,15 +662,15 @@ class Ticket:
         expiration_time_bytes = int(self.expiration_time.timestamp()).to_bytes(8, byteorder='little', signed=False)
 
         # Pack the data
-        packed_data = struct.pack('<B16s16s8s16s', self.server_version, self.client_id, self.server_id, creation_time_bytes, self.ticket_iv)
+        packed_data = struct.pack('<B16s16s8s16s', self.server_version, self.client_id, self.server_id, creation_time_bytes, self.ticket_iv) #57 bytes total
 
         # Encrypt AES key and expiration_time with the provided key and IV
         cipher = AES.new(key, AES.MODE_CBC, self.ticket_iv)
-        aes_key_exp_time = self.aes_key + expiration_time_bytes  # Combine both for encryption
-        padded_data = pad(aes_key_exp_time, AES.block_size)
+        aes_key_exp_time = self.aes_key + expiration_time_bytes  # Combine both for encryption (40 bytes)
+        padded_data = pad(aes_key_exp_time, AES.block_size) # Extended to 48 bytes
         encrypted_data = cipher.encrypt(padded_data)
 
-        packed_data += encrypted_data
+        packed_data += encrypted_data # bytes: 57 + 48 = 105
 
         return packed_data
     
@@ -688,22 +688,26 @@ class Ticket:
             Ticket: Unpacked Ticket object.
         """
         # Unpack the fixed-length data fields
-        unpacked_data = struct.unpack('<B16s16s8s16s', data)
+        format_size = struct.calcsize('<B16s16s8s16s')
+        unpacked_data = struct.unpack('<B16s16s8s16s', data[:format_size])
 
         # Extract fields from unpacked data
         server_version, client_id, server_id, creation_time_bytes, ticket_iv = unpacked_data
 
         # Extract the remaining bytes for encrypted_data
-        encrypted_data_length = len(data) - struct.calcsize('<B16s16s8s16s')
-        encrypted_data = data[-encrypted_data_length:]
+        encrypted_data = data[format_size:]
 
         # Decrypt AES key and expiration_time with the provided key and IV
         cipher = AES.new(key, AES.MODE_CBC, ticket_iv)
         decrypted_data = cipher.decrypt(encrypted_data)
+
+        # Remove padding
+        unpadded_data = unpad(decrypted_data, AES.block_size) #TODO: stop here - padding is incorrect (maybe key?)
         
         # Extract AES key and expiration_time
-        aes_key = decrypted_data[:32]
-        expiration_time_bytes = decrypted_data[32:]
+        aes_key = unpadded_data[:32]
+        expiration_time_bytes = unpadded_data[32:]
+        test = len(expiration_time_bytes) #should be 8
         
         # Convert creation_time and expiration_time from bytes
         creation_time = datetime.fromtimestamp(int.from_bytes(creation_time_bytes, byteorder='little'))

@@ -129,105 +129,122 @@ class MsgServer:
         print(f"Connection from {client_address}")
 
         try:
-            # Get client info
-            ip = client_address[0]
-            port = client_address[1]
-            client_dict_key = f'{ip}:{port}'
-            
-            # Receive the message
-            data = self.__receive_all_request(connection, header_size=REQUEST_HEADER_SIZE)  # Assuming 'RequestStructure' header size is fixed at 23 bytes
+            while True:
+                # Get client info
+                ip = client_address[0]
+                port = client_address[1]
+                client_dict_key = f'{ip}:{port}'
+                
+                # Receive the message
+                data = self.__receive_all_request(connection, header_size=REQUEST_HEADER_SIZE)  # Assuming 'RequestStructure' header size is fixed at 23 bytes
 
-            # Unpack the received data into a RequestStructure object
-            request_obj = RequestStructure.unpack(data)
+                # If no data is received, the client has closed the connection
+                if not data:
+                    print("Client closed the connection.")
+                    break
 
-            # Process the message based on the code
-            requestEnum_obj = RequestEnums.find(request_obj.code)
-            match requestEnum_obj:
-                case RequestEnums.DELIVER_SYMMETRY_KEY: # Receiving Symmetric key from client
-                    print("Received delivery of symmetric key request")
-                    try:
-                        if not request_obj.payload:
-                            raise ValueError(f"Delivery of Symmetric Key must conatin data in the payload")
-                        
-                        # -- 1 -- Extract from payload 'authenticator' + 'ticket' ---
-                        payload = request_obj.payload
-                        
-                        # Read lengths of encrypted objects
-                        authenticator_length = int.from_bytes(payload[:4], byteorder='little')
+                # Unpack the received data into a RequestStructure object
+                request_obj = RequestStructure.unpack(data)
 
-                        # Split into encrypted_authenticator and encrypted_ticket parts
-                        encrypted_authenticator = payload[4:4 + authenticator_length]
-                        encrypted_ticket = payload[4 + authenticator_length:]
-                        
-                        # -- 2 -- Decrypt 'Ticket' to get the AES_key for the decryption of the authenticator
-                        ticket = Ticket.unpack(data=encrypted_ticket,key=self.__auth_key)
-                        
-                        #verification:
-                        if ticket.server_id != self.id:
-                            raise ValueError(f"Server's ID does not match the Ticket's ID.")
-                        elif datetime.now() > ticket.expiration_time:
-                            raise ValueError(f"Ticket has expired")
-                        else:
+                # Process the message based on the code
+                requestEnum_obj = RequestEnums.find(request_obj.code)
+                match requestEnum_obj:
+                    case RequestEnums.DELIVER_SYMMETRY_KEY: # Receiving Symmetric key from client
+                        print("Received delivery of symmetric key request")
+                        try:
+                            if not request_obj.payload:
+                                raise ValueError(f"Delivery of Symmetric Key must conatin data in the payload")
+                            
+                            # -- 1 -- Extract from payload 'authenticator' + 'ticket' ---
+                            payload = request_obj.payload
+                            
+                            # Read lengths of encrypted objects
+                            authenticator_length = int.from_bytes(payload[:4], byteorder='little')
 
-                            # Create client object in dictionary
-                            self.clients[client_dict_key] = {
-                                'id': ticket.client_id,
-                                'key': ticket.aes_key
-                            }
+                            # Split into encrypted_authenticator and encrypted_ticket parts
+                            encrypted_authenticator = payload[4:4 + authenticator_length]
+                            encrypted_ticket = payload[4 + authenticator_length:]
+                            test = len(encrypted_ticket)
+                            
+                            # -- 2 -- Decrypt 'Ticket' to get the AES_key for the decryption of the authenticator
+                            ticket_key = Enc.derive_encryption_key(self.__auth_key)
+                            ticket = Ticket.unpack(data=encrypted_ticket,key=ticket_key)
+                            
+                            #verification:
+                            if ticket.server_id != self.id:
+                                raise ValueError(f"Server's ID does not match the Ticket's ID.")
+                            elif datetime.now() > ticket.expiration_time:
+                                raise ValueError(f"Ticket has expired")
+                            else:
 
-                        # -- 3 -- Decrypt authenticator for client's identity verification
-                        authenticator = Dec.decrypt_authenticator(data=encrypted_authenticator, client_key=ticket.aes_key)
-                        
-                        #verification:
-                        if authenticator.client_id != ticket.client_id:
-                            raise ValueError(f"Ticket's client ID does not match the Authenticator client ID.")
-                        elif authenticator.server_id != self.id:
-                            raise ValueError(f"Server's ID does not match the Authenticator's ID.")
-                        #elif TODO: need to do something with creation time?
-                        else:
-                            # All Good
-                            print(f"Symmetric key from client delivered successfully, connection has been set, ready to receive messages from client {ticket.client_id.hex()}.")
-                            response = ResponseStructure(self.version, ResponseEnums.SERVER_MESSAGE_ACCEPT_SYMMETRIC_KEY.value, payload=None).pack()
+                                # Create client object in dictionary
+                                self.clients[client_dict_key] = {
+                                    'id': ticket.client_id,
+                                    'key': ticket.aes_key
+                                }
+
+                            # -- 3 -- Decrypt authenticator for client's identity verification
+                            authenticator = Dec.decrypt_authenticator(data=encrypted_authenticator, client_key=ticket.aes_key)
+                            
+                            #verification:
+                            if authenticator.client_id != ticket.client_id:
+                                raise ValueError(f"Ticket's client ID does not match the Authenticator client ID.")
+                            elif authenticator.server_id != self.id:
+                                raise ValueError(f"Server's ID does not match the Authenticator's ID.")
+                            #elif TODO: need to do something with creation time?
+                            else:
+                                # All Good
+                                print(f"Symmetric key from client delivered successfully, connection has been set, ready to receive messages from client {ticket.client_id.hex()}.")
+                                response = ResponseStructure(self.version, ResponseEnums.SERVER_MESSAGE_ACCEPT_SYMMETRIC_KEY.value, payload=None).pack()
+                                connection.sendall(response)
+                            
+                        except Exception as e:
+                            print(f"Stopping delivery of symmetric key process.\t{e}")
+                            response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack()
                             connection.sendall(response)
-                        
-                    except Exception as e:
-                        print(f"Stopping delivery of symmetric key process.\t{e}")
+                            
+                    case RequestEnums.MESSAGE_TO_SERVER: # Print Message request
+                        print("Received print message request")
+                        try:
+                            if not request_obj.payload:
+                                raise ValueError(f"Print message request must conatin data in the payload")
+                            
+                            # Set parameters
+                            payload = request_obj.payload
+                            client = self.clients.get(client_dict_key)
+                            if not client:
+                                raise ValueError(f"Client '{client_dict_key}' AES key not found. Please deliver AES key before sending a message.")
+                            else:
+                                client_aes_key = client.get('key')
+                                client_id = client.get('id')
+                            
+                            # Decrypt 'EncryptedMessage' using the AES key with the client
+                            message = EncryptedMessage.unpack(data=payload, aes_key=client_aes_key)
+                            
+                            # Print the message
+                            print(f"'{client_id.hex()}' |\t{message.message_content}")
+
+                            response = ResponseStructure(self.version, ResponseEnums.SERVER_MESSAGE_RECIEVED_MSG_SUCCESSFULLY.value, payload=None).pack()
+                            connection.sendall(response)
+                        except Exception as e:
+                            print(f"Failed to get message from connection: {client_address}.\t{e}")
+                            response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack()
+                            connection.sendall(response)
+                            
+                    case _:
+                        print(f"Unfamiliar request code: '{request_obj.code}'")
                         response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack()
                         connection.sendall(response)
-                        
-                case RequestEnums.MESSAGE_TO_SERVER: # Print Message request
-                    print("Received print message request")
-                    try:
-                        if not request_obj.payload:
-                            raise ValueError(f"Print message request must conatin data in the payload")
-                        
-                        # Set parameters
-                        payload = request_obj.payload
-                        client = self.clients.get(client_dict_key)
-                        if not client:
-                            raise ValueError(f"Client '{client_dict_key}' AES key not found. Please deliver AES key before sending a message.")
-                        else:
-                            client_aes_key = client.get('key')
-                            client_id = client.get('id')
-                        
-                        # Decrypt 'EncryptedMessage' using the AES key with the client
-                        message = EncryptedMessage.unpack(data=payload, aes_key=client_aes_key)
-                        
-                        # Print the message
-                        print(f"'{client_id}' |\t{message.message_content}")
-                    except Exception as e:
-                        print(f"Failed to get message from connection: {client_address}.\t{e}")
-                        response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack()
-                        connection.sendall(response)
-                        
-                case _:
-                    print(f"Unfamiliar request code: '{request_obj.code}'")
-                    response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack()
-                    connection.sendall(response)
-        finally:
+        
+        except ConnectionResetError:
+            # Connection was reset by the client
+            print(f"Connection reset by the client '{client_address}'")
+        
+        except Exception as e:
             # Clean up the connection
-            print(f"Close connection with {client_address} server.")
-            connection.close()
+            print(f"Failed to get request from: '{client_address}'.\t{e}")
+            response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack()
+            connection.sendall(response)
     
     # ------- Utility functions -------
     def __read_msg_info_file(self) -> None:

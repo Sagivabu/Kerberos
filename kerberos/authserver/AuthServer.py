@@ -89,8 +89,7 @@ class AuthServer:
             requestEnum_obj = RequestEnums.find(request_obj.code)
             match requestEnum_obj:
                 case RequestEnums.CLIENT_REGISTRATION: # Client Registration
-                    print("Received client registration request:")
-                    print("Payload:", request_obj.payload)
+                    print("Received client registration request")
                     
                     try:
                         client_name, client_password = request_obj.extract_name_password()
@@ -123,7 +122,7 @@ class AuthServer:
                             connection.sendall(response)
                     
                 case RequestEnums.SERVER_REGISTRATION: # Server Registration (NOTE: BONUS)
-                    print("Received server registration request:")
+                    print("Received server registration request")
                     
                     try:
                         server_name, server_symmetric_key = request_obj.extract_server_name_symmetric_key()
@@ -155,7 +154,7 @@ class AuthServer:
                                 connection.sendall(response)
                                 
                             except Exception as e:
-                                print(f"Failed to register new server with name: '{server_name}', symmetric_key: '{server_symmetric_key_str}'.\n{e}")
+                                print(f"Failed to register new server with name: '{server_name}', symmetric_key: '{base64.b64encode(server_symmetric_key).decode('utf-8')}'.\n{e}")
                                 response = ResponseStructure(self.version, ResponseEnums.REGISTRATION_FAILED.value, None).pack() #prepare response as bytes
                                 connection.sendall(response)
                         else:
@@ -164,7 +163,7 @@ class AuthServer:
                             connection.sendall(response)
 
                 case RequestEnums.SERVER_LIST: # Server List (NOTE: BONUS)
-                    print("Received servers list request:")     
+                    print("Received servers list request")     
                     try:
                         #check if client registered
                         if not self.__is_client_exist_by_id(request_obj.client_id):
@@ -176,6 +175,7 @@ class AuthServer:
                         server_list = self.__read_server_file()
                         response_bytes = self.build_servers_list(server_list)
                         response = ResponseStructure(self.version, ResponseEnums.SERVER_LIST.value, payload=response_bytes).pack() #prepare response as bytes
+                        print(f"Sending list to client '{client_address}'")
                         connection.sendall(response)
                     except Exception as e: #if 
                         print(f"Failed to get list of servers.\t{e}")
@@ -183,7 +183,7 @@ class AuthServer:
                         connection.sendall(response)
 
                 case RequestEnums.SYMMETRIC_KEY: # Symmetric key to connect a server
-                    print("Received Symmetric key to a server request:")
+                    print("Received Symmetric key to a server request")
                     
                     try:
                         #check if client registered
@@ -196,8 +196,11 @@ class AuthServer:
                         response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
                         connection.sendall(response)
                     try: #get request's payload
-                        server_id = request_obj.payload[:16]
-                        nonce = request_obj.payload[16:]
+                        if not request_obj.payload:
+                            raise Exception(f"Payload is None and should contain 'server_id' and 'nonce'.")
+                        else:
+                            server_id = request_obj.payload[:16]
+                            nonce = request_obj.payload[16:]
                     except Exception as e: #if 
                         print(f"Failed to extract server_id and nonce from given payload.\t{e}")
                         response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
@@ -254,6 +257,7 @@ class AuthServer:
                             
                             #--5-- Send response
                             response = ResponseStructure(self.version, ResponseEnums.SYMMETRIC_KEY.value, payload=SKR_response).pack() #prepare response as bytes
+                            print(f"Successfully sending aes key to client '{client_address}' to connect server '{the_server.server_name}'")
                             connection.sendall(response)
                     
                 case _:
