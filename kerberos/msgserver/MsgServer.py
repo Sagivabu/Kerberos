@@ -248,14 +248,16 @@ class MsgServer:
             connection.sendall(response)
     
     # ------- Utility functions -------
-    def __read_msg_info_file(self) -> None:
+    def __read_msg_info_file(self, server_name: str) -> None:
         """
         Private function to read msg.info file and initialize self parameters
 
-        Returns:
-            list[Server]: list of Server objects that were extracted from file
+        Args:
+            server_name (str): server name to look for
         """
         # Acquire the lock before reading from the file
+        current_directory = os.path.dirname(__file__) # Get the directory of the current Python script
+        self.__msg_file_location = os.path.join(current_directory, f"{server_name}_"+MSG_FILE_NAME)
         with self.msg_file_lock:
             with open(self.msg_file, 'r') as file:
                 lines = file.readlines()
@@ -447,11 +449,12 @@ class MsgServer:
             
         # Read server from file
         else:
-            try:
+            try: 
+                server_name = input("Enter server name: ") # Enter existing server name
                 # Initialize the server's parameters
-                self.__read_msg_info_file()
+                self.__read_msg_info_file(server_name=server_name)
             except Exception as e:
-                print(f"Failed to read msg.info txt file: {e}")
+                print(f"Failed to read {server_name}_msg.info txt file: {e}")
                 return
 
 
