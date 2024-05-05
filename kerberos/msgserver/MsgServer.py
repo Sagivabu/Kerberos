@@ -1,3 +1,5 @@
+# Sagiv Abu 206122459
+
 import socket
 import threading
 import struct
@@ -23,9 +25,8 @@ class MsgServer:
         self.__max_connections = max_connections
         self.__version = version
         
-        # Create the file path
-        current_directory = os.path.dirname(__file__) # Get the directory of the current Python script
-        self.__msg_file_location = os.path.join(current_directory, MSG_FILE_NAME)
+        # Create the file 
+        self.__msg_file_location : str
 
         #files locks
         self.__msg_file_lock = threading.Lock() # Define a lock to manage the threads that attend to msg.info.txt file
@@ -388,11 +389,14 @@ class MsgServer:
             file.write(f"{aes_key_base64}\n")
     
     # ------- RUN SERVER -------  
-    def run(self):
+    def run(self, pre_input: str = None):
         """ Create a TCP/IP socket and run the server"""
         
         # Register to Msg server
-        to_register = input("If you want to register a new server, please insert 'Y', otherwise it will look for msg.info.txt file to read data from: ")
+        if pre_input:
+            to_register = pre_input
+        else:
+            to_register = input("If you want to register a new server, please insert 'Y', otherwise it will look for msg.info.txt file to read data from: ")
         
         # Register a new server
         if to_register in ['Y','y']:
@@ -434,6 +438,8 @@ class MsgServer:
                     return
                 
                 # -- 4 -- Create msg.info.txt file
+                current_directory = os.path.dirname(__file__) # Get the directory of the current Python script
+                self.__msg_file_location = os.path.join(current_directory, f"{self.name}_"+MSG_FILE_NAME)
                 self.__create_info_file()
             except Exception as e:
                 print(f"Failed to register server in Message server.\t{e}")

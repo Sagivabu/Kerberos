@@ -1,3 +1,5 @@
+# Sagiv Abu 206122459
+
 import os
 import socket
 import threading
@@ -166,10 +168,14 @@ class AuthServer:
                     print("Received servers list request")     
                     try:
                         #check if client registered
-                        if not self.__is_client_exist_by_id(request_obj.client_id):
+                        client_obj = self.__is_client_exist_by_id(request_obj.client_id)
+                        if not client_obj:
                             print(f"ERROR: Client is not registered in DB, request rejected.")
                             response = ResponseStructure(self.version, ResponseEnums.SERVER_REJECT_REQUEST.value, payload=None).pack() #prepare response as bytes
                             connection.sendall(response)
+                            
+                        #update request time of client in clients.txt file
+                        self.update_client_info(client_obj)
                             
                         #get list of servers
                         server_list = self.__read_server_file()
@@ -187,7 +193,8 @@ class AuthServer:
                     
                     try:
                         #check if client registered
-                        if not self.__is_client_exist_by_id(request_obj.client_id):
+                        client_obj = self.__is_client_exist_by_id(request_obj.client_id)
+                        if not client_obj:
                             print(f"ERROR: Client is not registered in DB, request rejected.")
                             response = ResponseStructure(self.version, ResponseEnums.SERVER_REJECT_REQUEST.value, payload=None).pack() #prepare response as bytes
                             connection.sendall(response)
@@ -206,6 +213,8 @@ class AuthServer:
                         response = ResponseStructure(self.version, ResponseEnums.SERVER_GENERAL_ERROR.value, payload=None).pack() #prepare response as bytes
                         connection.sendall(response)
                     else:
+                        #update request time of client in clients.txt file
+                        self.update_client_info(client_obj)
 
                         # Create client and server lists
                         server_list = self.__read_server_file() #get all servers from db
@@ -310,6 +319,7 @@ class AuthServer:
                     password_hash_str == line_parts[2]
                 ):
                     # Reconstruct the line with updated lastseen
+                    client_obj.update_lastseen()
                     lines[i] = client_obj.print_as_row()
                     break
                 
@@ -363,21 +373,21 @@ class AuthServer:
                 return True
         return False
 
-    def __is_client_exist_by_id(self, client_id: bytes) -> bool:
+    def __is_client_exist_by_id(self, client_id: bytes) -> Client | None:
         """
-        Return True if client_id exists in client.txt
+        Return Client obj if client_id exists in client.txt
 
         Args:
             client_id (bytes): Client's id
 
         Returns:
-            bool: True if exists, False otherwise
+            Client: Client obj exists, None otherwise
         """
         client_list = self.__read_clients_file()
         for client in client_list:
             if client.id == client_id:
-                return True
-        return False
+                return client
+        return None
     
     # ------- Server handle Functions -------
     def __add_server_to_file(self, server: Server) -> None:

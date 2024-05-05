@@ -1,5 +1,7 @@
-import subprocess
+# Sagiv Abu 206122459
+
 import time
+import threading
 from kerberos.authserver.AuthServer import AuthServer
 from kerberos.msgserver.MsgServer import MsgServer
 from kerberos.clientapp.ClientApp import ClientApp
@@ -7,20 +9,37 @@ from kerberos.clientapp.ClientApp import ClientApp
 
 def main():
     try:
-        # Upload Authentication Server in s new console
-        subprocess.Popen(['python', '"C:/git/Kerberos/kerberos/authserver/AuthServer.py"'], creationflags=subprocess.CREATE_NEW_CONSOLE)
+        auth_server = AuthServer()
+        auth_server_thread = threading.Thread(target=auth_server.run)
+        auth_server_thread.start()
+        time.sleep(1)
         
-        # Upload 2 Clients
-            # Register both
-            # Ask for symmetric key for server 1
-            # Send symmetric key
-            # Send a message
-            # Down and upload the same client (no need for registratrion)
+        msg_server = MsgServer()
+        msg_server_thread = threading.Thread(target=msg_server.run, args='n')
+        msg_server_thread.start()
+        time.sleep(1)
         
-        # Upload 2 Message Servers
-            # Register both
-        print('hi')
-        time.sleep(25)
+        client = ClientApp()
+        while True:
+            try:
+                user_input = input("\nEnter command from list:\
+                                \n'get_key ip:port server_id'\
+                                \n'connect ip:port'\
+                                \n'disconnect ip:port\
+                                \n'set_password password'\
+                                \n 'get_servers_list'\
+                                \n'add_server ip:port'\
+                                \n'send ip:port msg'\
+                                \n'register'\
+                                \nEnter 'F' to finish process: ")
+                if user_input in ['f','F']:
+                    print("\nFinishing...")
+                    break
+            except KeyboardInterrupt:
+                print("\nExiting...")
+                break
+
+            client.handle_user_input(user_input)
             
         # Monkeys tests?
         pass

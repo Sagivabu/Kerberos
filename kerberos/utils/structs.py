@@ -236,7 +236,6 @@ class Client:
         self.id = id
 
         # Limit name to 255 characters
-        # Limit server_name to 255 characters
         if len(name) > 255:
             raise ValueError("Name must be 255 characters or less")
         self.name = name
@@ -251,7 +250,6 @@ class Client:
             self.lastseen = Lastseen.from_datetime(datetime_obj)
         except ValueError as e:
             raise ValueError("Invalid datetime object") from e
-        # Convert user_id string to bytes (UTF-8 encoding)
 
     @classmethod
     def from_plain_password(cls, id: bytes, name: str, password: str, datetime_obj: datetime):
@@ -320,6 +318,14 @@ class Client:
             )
         return False
 
+    def update_lastseen(self) -> None:
+        """ Update lastseen object with current time """
+        try:
+            current_time = datetime.now()
+            self.lastseen = Lastseen.from_datetime(current_time)
+        except ValueError as e:
+            raise ValueError("Failed to update Lastseen object with current time") from e
+        
 class Server:
     def __init__(self, server_ip: str, server_port: int, server_name: str, server_id: bytes, symmetric_key: bytes, version: int = 24):
         """
