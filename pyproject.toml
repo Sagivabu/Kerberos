@@ -1,0 +1,14 @@
+[tool.poetry]
+name = "automation-output"
+version = "0.1.0"
+description = "This package contain features to make a better report out of the tests"
+authors = ["Sagiv Abu <sagivab@omnisys.co.il>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
